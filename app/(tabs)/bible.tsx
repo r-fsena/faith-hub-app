@@ -4,52 +4,61 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { useRouter } from 'expo-router';
 
 const BIBLE_API_URL = 'https://www.abibliadigital.com.br/api';
 
-export default function BibleScreen() {
-  const [books, setBooks] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
-  const colorScheme = useColorScheme();
+import { BIBLE_BOOKS } from '@/constants/BibleBooks';
 
-  useEffect(() => {
-    fetch(`${BIBLE_API_URL}/books`)
-      .then((res) => res.json())
-      .then((data) => {
-        setBooks(data);
-        setLoading(false);
-      })
-      .catch((err) => {
-        console.error('Error fetching Bible books:', err);
-        setLoading(false);
-      });
-  }, []);
+export default function BibleScreen() {
+  const router = useRouter();
+  const [books, setBooks] = useState<any[]>(BIBLE_BOOKS);
+  const [version, setVersion] = useState<'nvi' | 'arc' | 'ara'>('nvi');
+  const colorScheme = useColorScheme();
 
   const backgroundColor = colorScheme === 'dark' ? '#1D3D47' : '#A1CEDC';
   const textColor = colorScheme === 'dark' ? '#fff' : '#000';
-
-  if (loading) {
-    return (
-      <ThemedView style={[styles.centered, { backgroundColor: colorScheme === 'dark' ? '#151718' : '#fff' }]}>
-        <ActivityIndicator size="large" color="#0a7ea4" />
-        <ThemedText style={styles.loadingText}>Carregando Bíblia...</ThemedText>
-      </ThemedView>
-    );
-  }
 
   return (
     <ThemedView style={styles.container}>
       <View style={[styles.header, { backgroundColor }]}>
         <ThemedText type="title" style={styles.headerTitle}>Bíblia Sagrada</ThemedText>
-        <ThemedText style={styles.headerSubtitle}>Escolha um livro para começar a leitura</ThemedText>
+        <ThemedText style={styles.headerSubtitle}>Selecione a versão e o livro</ThemedText>
       </View>
+      
+      {/* VERSION SELECTOR */}
+      <View style={styles.versionSelector}>
+        <TouchableOpacity 
+          style={[styles.versionBtn, version === 'nvi' && { backgroundColor: '#0a7ea4', borderColor: '#0a7ea4' }]} 
+          onPress={() => setVersion('nvi')}
+        >
+          <ThemedText style={[styles.versionText, version === 'nvi' && { color: '#FFF' }]}>NVI</ThemedText>
+        </TouchableOpacity>
+        <TouchableOpacity 
+          style={[styles.versionBtn, version === 'arc' && { backgroundColor: '#0a7ea4', borderColor: '#0a7ea4' }]} 
+          onPress={() => setVersion('arc')}
+        >
+          <ThemedText style={[styles.versionText, version === 'arc' && { color: '#FFF' }]}>ARC</ThemedText>
+        </TouchableOpacity>
+        <TouchableOpacity 
+          style={[styles.versionBtn, version === 'ara' && { backgroundColor: '#0a7ea4', borderColor: '#0a7ea4' }]} 
+          onPress={() => setVersion('ara')}
+        >
+          <ThemedText style={[styles.versionText, version === 'ara' && { color: '#FFF' }]}>ARA</ThemedText>
+        </TouchableOpacity>
+      </View>
+
       <FlatList
         data={books}
-        keyExtractor={(item) => item.abbrev.pt}
+        keyExtractor={(item) => item.abbrev}
+        contentContainerStyle={{ paddingBottom: 100 }}
         renderItem={({ item }) => (
-          <TouchableOpacity style={[styles.bookItem, { borderBottomColor: colorScheme === 'dark' ? '#333' : '#eee' }]}>
+          <TouchableOpacity 
+            style={[styles.bookItem, { borderBottomColor: colorScheme === 'dark' ? '#333' : '#eee' }]}
+            onPress={() => router.push(`/bible/${item.abbrev}?name=${item.name}&chapters=${item.chapters}&version=${version}` as any)}
+          >
             <View style={styles.bookInfo}>
-              <ThemedText type="defaultSemiBold" style={{ color: textColor }}>{item.name}</ThemedText>
+              <ThemedText type="defaultSemiBold" style={{ color: textColor, fontSize: 16 }}>{item.name}</ThemedText>
               <ThemedText style={[styles.author, { color: textColor }]}>{item.author}</ThemedText>
             </View>
             <View style={styles.chaptersBadge}>
@@ -90,6 +99,25 @@ const styles = StyleSheet.create({
   headerSubtitle: {
     color: 'rgba(255, 255, 255, 0.8)',
     marginTop: 4,
+  },
+  versionSelector: {
+    flexDirection: 'row',
+    paddingHorizontal: 20,
+    marginBottom: 10,
+    marginTop: 6,
+    gap: 12,
+  },
+  versionBtn: {
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: '#0a7ea4',
+  },
+  versionText: {
+    color: '#0a7ea4',
+    fontWeight: '700',
+    fontSize: 13,
   },
   bookItem: {
     flexDirection: 'row',

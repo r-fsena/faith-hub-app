@@ -31,7 +31,15 @@ yarn-error.*
 *.pem
 
 # local env files
-.env*.local
+.env
+.env*
+
+# AWS Mobile Hub overrides
+aws-exports.js
+
+# Extras
+.bundle/
+package-lock 2.json
 
 # typescript
 *.tsbuildinfo

@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html>
+<body>
+  <img id="img" src="file:///Users/rafaelsena/Desktop/Projetos%20Apps/faith-hub/assets/images/Original%20Logo%20Symbol.png" crossorigin="anonymous" />
+  <script>
+    document.getElementById('img').onload = function() {
+      const img = document.getElementById('img');
+      const canvas = document.createElement('canvas');
+      canvas.width = img.width;
+      canvas.height = img.height;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(img, 0, 0, img.width, img.height);
+      const data = ctx.getImageData(0, 0, img.width, img.height).data;
+      const colors = {};
+      for(let i = 0; i < data.length; i += 4) {
+        if(data[i+3] < 10) continue;
+        const hex = "#" + ("0" + data[i].toString(16)).slice(-2) + ("0" + data[i+1].toString(16)).slice(-2) + ("0" + data[i+2].toString(16)).slice(-2);
+        if(hex !== "#ffffff" && hex !== "#000000") {
+            colors[hex] = (colors[hex] || 0) + 1;
+        }
+      }
+      const dom = Object.keys(colors).reduce((a, b) => colors[a] > colors[b] ? a : b);
+      document.body.innerHTML += "<h1>DOMINANT COLOR: " + dom + "</h1>";
+    };
+  </script>
+</body>
+</html>
