@@ -4,6 +4,7 @@ import { Feather } from '@expo/vector-icons';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useRouter, useLocalSearchParams, useFocusEffect } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import YoutubePlayer from 'react-native-youtube-iframe';
 
 // Mock de Banco de Dados Flexível:
 // Suporta Devocionais Originais da Igreja ou Devocionais Globais (com comentário do Pastor local)
@@ -13,6 +14,10 @@ const devotionalData = {
   title: 'A Paz que Excede o Entendimento',
   sourceType: 'GLOBAL', // 'LOCAL' ou 'GLOBAL'
   sourceName: 'Pão Diário Mídia', // Fonte originária se for Global
+  suggestedSong: {
+    title: 'Louvor Recomendado: Paz (Ao Vivo)',
+    youtubeId: 'jfKfPfyJRdk' // Substituir pelo ID exato do clipe no banco de dados real
+  },
   centralText: '"E a paz de Deus, que excede todo o entendimento, guardará os vossos corações e os vossos pensamentos em Cristo Jesus." \n— Filipenses 4:7',
   contextText: 'Vivemos em um mundo acelerado onde a ansiedade muitas vezes bate à nossa porta. O apóstolo Paulo nos lembra que existe uma paz sobrenatural, uma paz que a mente humana não consegue explicar nem fabricar artificialmente.\n\nEssa paz não é a ausência de problemas, mas a presença e a garantia de Cristo no meio da tempestade. Quando entregamos nossas preocupações a Ele através da oração e ações de graças, essa paz se torna a sentinela armada protegendo nossas emoções.',
   prayerIndication: 'Senhor, hoje eu Te entrego todas as minhas ansiedades. Ajuda-me a confiar no Teu cuidado e enche o meu coração com a Tua paz que excede todo o entendimento. Que a minha mente esteja protegida em Cristo. Amém.',
@@ -37,6 +42,7 @@ export default function DevotionalScreen() {
   const [personalNotes, setPersonalNotes] = useState('');
   const [internalStatus, setInternalStatus] = useState(currentStatus);
   const [isInitializing, setIsInitializing] = useState(true);
+  const [isPlayingMusic, setIsPlayingMusic] = useState(false);
 
   useFocusEffect(
     React.useCallback(() => {
@@ -126,6 +132,29 @@ export default function DevotionalScreen() {
           </View>
           
           <Text style={[styles.mainTitle, { color: textColor }]}>{devotionalData.title}</Text>
+
+          {/* MÚSICA SUGERIDA */}
+          {devotionalData.suggestedSong && (
+            <View style={[styles.musicCard, { backgroundColor: isDark ? '#2c3444' : '#F9FAFB', borderColor }]}>
+              <View style={styles.musicHeader}>
+                <Feather name="music" size={16} color={accentColor} />
+                <Text style={[styles.musicTitle, { color: textColor }]} numberOfLines={1}>{devotionalData.suggestedSong.title}</Text>
+                <TouchableOpacity onPress={() => setIsPlayingMusic(!isPlayingMusic)} style={[styles.musicPlayBtn, { backgroundColor: accentColor }]}>
+                  <Feather name={isPlayingMusic ? "pause" : "play"} size={14} color="#FFF" style={{ marginLeft: isPlayingMusic ? 0 : 2 }} />
+                </TouchableOpacity>
+              </View>
+              {isPlayingMusic && (
+                <View style={{ borderRadius: 12, overflow: 'hidden', marginTop: 12 }}>
+                  <YoutubePlayer
+                    height={180}
+                    play={isPlayingMusic}
+                    videoId={devotionalData.suggestedSong.youtubeId}
+                    webViewStyle={{ opacity: 0.99 }} // Android crash fix
+                  />
+                </View>
+              )}
+            </View>
+          )}
 
           {/* TEXTO CENTRAL (Versículo Tema) */}
           <View style={[styles.card, styles.centralTextCard, { backgroundColor: accentColor }]}>
@@ -411,5 +440,29 @@ const styles = StyleSheet.create({
     color: '#FFF',
     fontSize: 16,
     fontWeight: '700',
+  },
+  musicCard: {
+    borderRadius: 16,
+    padding: 16,
+    marginBottom: 24,
+    borderWidth: 1,
+  },
+  musicHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  musicTitle: {
+    flex: 1,
+    marginLeft: 8,
+    marginRight: 16,
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  musicPlayBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    justifyContent: 'center',
+    alignItems: 'center',
   }
 });

@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, SafeAreaView, Platform, Alert, Image } from 'react-native';
 import { Feather } from '@expo/vector-icons';
-import { useRouter, useLocalSearchParams } from 'expo-router';
+import { useRouter, useLocalSearchParams, Stack } from 'expo-router';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 
 export default function EventSignupScreen() {
@@ -46,8 +46,10 @@ export default function EventSignupScreen() {
   };
 
   return (
-    <SafeAreaView style={[styles.safeArea, { backgroundColor: bgColor }]}>
-      {/* HEADER */}
+    <>
+      <Stack.Screen options={{ headerShown: false }} />
+      <SafeAreaView style={[styles.safeArea, { backgroundColor: bgColor }]}>
+        {/* HEADER */}
       <View style={[styles.header, { borderBottomColor: borderColor }]}>
         <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
           <Feather name="arrow-left" size={24} color={textColor} />
@@ -167,6 +169,7 @@ export default function EventSignupScreen() {
         </View>
       </ScrollView>
     </SafeAreaView>
+    </>
   );
 }
 

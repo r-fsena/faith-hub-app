@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, SafeAreaView, Platform, Dimensions } from 'react-native';
 import { Feather } from '@expo/vector-icons';
-import { useRouter } from 'expo-router';
+import { useRouter, Stack } from 'expo-router';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { ChurchEvent, ChurchCourse } from '@/types/events';
 
@@ -33,8 +33,10 @@ export default function EventHubScreen() {
   const primaryBrand = '#5bc3bb';
 
   return (
-    <SafeAreaView style={[styles.safeArea, { backgroundColor: bgColor }]}>
-      <View style={[styles.header, { borderBottomColor: borderColor }]}>
+    <>
+      <Stack.Screen options={{ headerShown: false }} />
+      <SafeAreaView style={[styles.safeArea, { backgroundColor: bgColor }]}>
+        <View style={[styles.header, { borderBottomColor: borderColor }]}>
         <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
           <Feather name="arrow-left" size={24} color={textColor} />
         </TouchableOpacity>
@@ -203,6 +205,7 @@ export default function EventHubScreen() {
         )}
       </ScrollView>
     </SafeAreaView>
+    </>
   );
 }
 
