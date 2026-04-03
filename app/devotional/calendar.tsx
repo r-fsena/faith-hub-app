@@ -5,14 +5,6 @@ import { Feather } from '@expo/vector-icons';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-const calendarMock = [
-  { id: 'd-99', date: '21 de Mar', status: 'completed', title: 'A Alegria do Senhor' },
-  { id: 'd-100', date: '22 de Mar', status: 'missed', title: 'O Cultivo da Fé' },
-  { id: 'd-101', date: '23 de Mar', status: 'pending', title: 'A Paz que Excede o Entendimento' },
-  { id: 'd-102', date: '24 de Mar', status: 'locked', title: 'Graça Abundante' },
-  { id: 'd-103', date: '25 de Mar', status: 'locked', title: 'Tempo de Descanso' },
-  { id: 'd-104', date: '26 de Mar', status: 'locked', title: 'Raízes Profundas' },
-];
 
 export default function DevotionalCalendarScreen() {
   const router = useRouter();
@@ -20,20 +12,53 @@ export default function DevotionalCalendarScreen() {
   const colorScheme = useColorScheme();
   const isDark = colorScheme === 'dark';
 
-  const [calendarData, setCalendarData] = React.useState(calendarMock);
-  const [stats, setStats] = React.useState({ completed: 1, streak: 1, pending: 1 });
+  const [calendarData, setCalendarData] = React.useState<any[]>([]);
+  const [stats, setStats] = React.useState({ completed: 0, streak: 0, pending: 0 });
 
   React.useEffect(() => {
     const loadState = async () => {
       try {
-        const keys = calendarMock.map(c => `devo_${c.id}`);
+        const { fetchAuthSession } = await import('aws-amplify/auth');
+        const session = await fetchAuthSession().catch(() => null);
+        
+        const baseUrl = Platform.OS === 'android' ? 'http://10.0.2.2:3000' : 'http://localhost:3000';
+        const res = await fetch(`${baseUrl}/devotionals`, {
+          headers: { 'Authorization': `Bearer ${session?.tokens?.idToken?.toString() || ''}` }
+        });
+        
+        let fetchedData = [];
+        if (res.ok) {
+          const rawData = await res.json();
+          const today = new Date().toISOString().split('T')[0];
+          
+          fetchedData = rawData.map((d: any) => {
+            const dateStr = d.available_date.split('T')[0];
+            const dDate = new Date(dateStr);
+            const formattedDate = `${dDate.getUTCDate()} de ${dDate.toLocaleString('pt-BR', { month: 'short' }).replace('.', '')}`;
+            
+            let status = 'pending';
+            if (dateStr > today) status = 'locked';
+            if (dateStr < today) status = 'missed';
+            if (dateStr === today) status = 'pending';
+            
+            return {
+              id: d.id,
+              dateStr,
+              date: formattedDate,
+              status,
+              title: d.title
+            };
+          }).sort((a: any, b: any) => a.dateStr.localeCompare(b.dateStr)); // Sort oldest to newest
+        }
+
+        const keys = fetchedData.map((c: any) => `devo_${c.id}`);
         const results = await AsyncStorage.multiGet(keys);
         
         let newCompleted = 0;
         let newPending = 0;
         let currentStreak = 0;
 
-        const newData = calendarMock.map(item => {
+        const newData = fetchedData.map((item: any) => {
            const storageVal = results.find(r => r[0] === `devo_${item.id}`);
            let realStatus = item.status;
            
@@ -42,7 +67,7 @@ export default function DevotionalCalendarScreen() {
              if (payload.status === 'completed') realStatus = 'completed';
            }
            
-           // Se acabou de salvar, força interface como concluída no ID focado (d-101) ou o que for pendente
+           // Se acabou de salvar, força interface como concluída no ID focado ou o que for pendente
            if (saved === 'true' && item.status === 'pending') {
               realStatus = 'completed';
            }
@@ -67,7 +92,7 @@ export default function DevotionalCalendarScreen() {
         setCalendarData(newData);
         setStats({ completed: newCompleted, streak: currentStreak, pending: newPending });
       } catch (err) {
-        console.error('Failed to load async storage', err);
+        console.error('Failed to load async storage or fetch API', err);
       }
     };
     loadState();
@@ -151,7 +176,7 @@ export default function DevotionalCalendarScreen() {
                 key={item.id} 
                 style={[styles.listItem, !isLast && { borderBottomColor: borderColor, borderBottomWidth: 1 }]}
                 disabled={item.status === 'locked'}
-                onPress={() => router.push(`/(tabs)/devotional?id=${item.id}&status=${item.status}&date=${encodeURIComponent(item.date)}` as any)}
+                onPress={() => router.push(`/(tabs)/devotional?id=${item.id}&status=${item.status}&date=${encodeURIComponent(item.dateStr)}` as any)}
                 activeOpacity={0.7}
               >
                 <View style={styles.itemLeft}>

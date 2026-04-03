@@ -7,7 +7,8 @@ import {
   confirmSignUp as amplifyConfirmSignUp,
   signInWithRedirect,
   resetPassword as amplifyResetPassword,
-  confirmResetPassword as amplifyConfirmResetPassword
+  confirmResetPassword as amplifyConfirmResetPassword,
+  confirmSignIn as amplifyConfirmSignIn
 } from 'aws-amplify/auth';
 import { Hub } from 'aws-amplify/utils';
 
@@ -21,6 +22,7 @@ interface AuthContextType {
   federatedSignIn: (provider: 'Google' | 'Facebook' | 'Apple') => Promise<void>;
   resetPassword: (username: string) => Promise<any>;
   confirmResetPassword: (username: string, confirmationCode: string, newPassword: string) => Promise<void>;
+  confirmSignIn: (challengeResponse: string) => Promise<any>;
 }
 
 const AuthContext = createContext<AuthContextType>({
@@ -33,6 +35,7 @@ const AuthContext = createContext<AuthContextType>({
   federatedSignIn: async () => {},
   resetPassword: async () => {},
   confirmResetPassword: async () => {},
+  confirmSignIn: async () => {},
 });
 
 export function useAuth() {
@@ -145,6 +148,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }
 
+  async function confirmSignIn(challengeResponse: string) {
+    try {
+      const result = await amplifyConfirmSignIn({ challengeResponse });
+      return result;
+    } catch (error) {
+      throw error;
+    }
+  }
+
   const value = {
     user,
     isLoading,
@@ -155,6 +167,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     federatedSignIn,
     resetPassword,
     confirmResetPassword,
+    confirmSignIn,
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

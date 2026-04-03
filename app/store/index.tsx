@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, SafeAreaView, Platform, Dimensions, Image, TextInput } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, SafeAreaView, Platform, Dimensions, Image, TextInput, Modal, KeyboardAvoidingView } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { useRouter, Stack } from 'expo-router';
 import { useColorScheme } from '@/hooks/use-color-scheme';
@@ -11,18 +11,11 @@ type Product = {
   title: string;
   category: string;
   price: number;
-  image: string;
-  stock: number;
+  image_urls: string[] | string;
+  stock?: number;
 };
 
-const mockProducts: Product[] = [
-  { id: 'p1', title: 'Camiseta Leão de Judá', category: 'Vestuário', price: 69.90, image: 'https://images.unsplash.com/photo-1521572163474-6864f9cf17ab?auto=format&fit=crop&q=80&w=400', stock: 15 },
-  { id: 'p2', title: 'Bíblia de Estudo Premium', category: 'Livros', price: 149.90, image: 'https://images.unsplash.com/photo-1491841550275-ad7854e35ca6?auto=format&fit=crop&q=80&w=400', stock: 5 },
-  { id: 'p3', title: 'Squeeze Graça Sobre Graça', category: 'Acessórios', price: 39.90, image: 'https://images.unsplash.com/photo-1518172023537-88544e4bf7e9?auto=format&fit=crop&q=80&w=400', stock: 20 },
-  { id: 'p4', title: 'Boné Fé (Aba Reta)', category: 'Vestuário', price: 49.90, image: 'https://images.unsplash.com/photo-1588850561407-ed78c282e89b?auto=format&fit=crop&q=80&w=400', stock: 8 },
-  { id: 'p5', title: 'Devocional Anual', category: 'Livros', price: 59.90, image: 'https://images.unsplash.com/photo-1589829085413-56de8ae18c73?auto=format&fit=crop&q=80&w=400', stock: 12 },
-  { id: 'p6', title: 'Caneca Eu Faço Parte', category: 'Acessórios', price: 29.90, image: 'https://images.unsplash.com/photo-1514228742587-6b1558fcca3d?auto=format&fit=crop&q=80&w=400', stock: 30 },
-];
+import { fetchAuthSession } from 'aws-amplify/auth';
 
 const categories = ['Todos', 'Vestuário', 'Livros', 'Acessórios'];
 
@@ -31,33 +24,9 @@ export default function StoreScreen() {
   const colorScheme = useColorScheme();
   const isDark = colorScheme === 'dark';
 
-  // Navigation states internally to not lose volatile cart context
+  // Navigation states internally
   const [currentView, setCurrentView] = useState<'catalog' | 'cart' | 'checkout' | 'success' | 'orders' | 'orderDetail'>('catalog');
   const [selectedOrder, setSelectedOrder] = useState<any>(null);
-
-  // Filter
-  const [activeCategory, setActiveCategory] = useState('Todos');
-
-  // Cart
-  type CartItem = { product: Product; quantity: number };
-  const [cart, setCart] = useState<CartItem[]>([]);
-
-  // Checkout info
-  const [deliveryMethod, setDeliveryMethod] = useState<'church' | 'home'>('church');
-  const [pickupDay, setPickupDay] = useState<'Sexta-feira' | 'Domingo' | null>(null);
-  const [address, setAddress] = useState('');
-  
-  // Payment Simulator
-  const [isPixPaid, setIsPixPaid] = useState(false);
-
-  // Orders Data
-  const [orders, setOrders] = useState<any[]>([
-    { 
-      id: 'ORD-9821', date: '10 Nov 2025', status: 'ENTREGUE', total: 119.80, items: 2, 
-      itemsDetail: [ { name: 'Camiseta Leão de Judá', qty: 1, price: 69.90 }, { name: 'Boné Fé', qty: 1, price: 49.90 } ],
-      delivery: 'Retirar na Igreja',
-    },
-  ]);
 
   const bgColor = isDark ? '#1a2130' : '#f1f1f1';
   const cardColor = isDark ? '#2c3444' : '#FFFFFF';
@@ -69,43 +38,166 @@ export default function StoreScreen() {
 
   const formatPrice = (price: number) => `R$ ${price.toFixed(2).replace('.', ',')}`;
 
-  const addToCart = (product: Product) => {
-    setCart((prev) => {
-      const existing = prev.find((item) => item.product.id === product.id);
-      if (existing) {
-        return prev.map((item) => item.product.id === product.id ? { ...item, quantity: item.quantity + 1 } : item);
+  // Dynamic Catalog
+  const [products, setProducts] = useState<Product[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [dynamicCats, setDynamicCats] = useState<string[]>(['Todos']);
+
+  // Filter
+  const [activeCategory, setActiveCategory] = useState('Todos');
+
+  // Dynamic Catalog
+
+  React.useEffect(() => {
+    loadCatalog();
+  }, []);
+
+  const loadCatalog = async () => {
+    try {
+      const baseUrl = Platform.OS === 'android' ? 'http://10.0.2.2:3000' : 'http://localhost:3000';
+      const session = await fetchAuthSession();
+      const token = session.tokens?.idToken?.toString();
+      
+      const res = await fetch(`${baseUrl}/pdv/products`, {
+         headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        const parsed: Product[] = data.map((p: any) => ({
+           id: p.id,
+           title: p.name,
+           category: p.category,
+           price: Number(p.price) || 0,
+           image_urls: typeof p.image_urls === 'string' ? JSON.parse(p.image_urls) : (p.image_urls || [])
+        }));
+        setProducts(parsed);
+        const cats = Array.from(new Set(parsed.map((p: Product) => p.category))) as string[];
+        setDynamicCats(['Todos', ...cats]);
       }
-      return [...prev, { product, quantity: 1 }];
-    });
+    } catch(e) { console.log(e); } 
+      finally { setLoading(false); }
   };
 
-  const removeFromCart = (productId: string) => {
-    setCart((prev) => prev.filter(item => item.product.id !== productId));
+  // Cart
+  type CartItem = { id: string, product: Product; quantity: number, observation?: string };
+  const [cart, setCart] = useState<CartItem[]>([]);
+
+  // LongPress Modal
+  const [showModal, setShowModal] = useState<Product | null>(null);
+  const [obsText, setObsText] = useState('');
+  const [qtdSelect, setQtdSelect] = useState<number | string>(1);
+
+  // Checkout info
+  const [deliveryMethod, setDeliveryMethod] = useState<'church' | 'home'>('church');
+  const [pickupDay, setPickupDay] = useState<string | null>(null);
+  
+  // Home Delivery
+  const [cep, setCep] = useState('');
+  const [endRua, setEndRua] = useState('');
+  const [endNumero, setEndNumero] = useState('');
+  const [endAC, setEndAC] = useState('');
+  const [endHorario, setEndHorario] = useState('');
+
+  // Orders Data
+  const [orders, setOrders] = useState<any[]>([
+    { 
+      id: 'ORD-9821', date: '10 Nov 2025', status: 'ENTREGUE', total: 119.80, items: 2, 
+      itemsDetail: [ { name: 'Camiseta Leão de Judá', qty: 1, price: 69.90 }, { name: 'Boné Fé', qty: 1, price: 49.90 } ],
+      delivery: 'Retirar na Igreja',
+    },
+  ]);
+
+  const addToCart = (product: Product, quantity: number = 1, observation: string = '') => {
+    setCart((prev) => {
+      // Se não tiver observação customizada, tenta agrupar com um igual (sem obs)
+      if (!observation) {
+        const existing = prev.find((item) => item.product.id === product.id && !item.observation);
+        if (existing) {
+          return prev.map((item) => item.product.id === product.id && !item.observation ? { ...item, quantity: item.quantity + quantity } : item);
+        }
+      }
+      // Sempre criar nova linha se tiver observação, ou se for novo
+      return [...prev, { id: Math.random().toString(36).substring(7), product, quantity, observation }];
+    });
+    setShowModal(null);
+  };
+
+  const removeFromCart = (cartId: string) => {
+    setCart((prev) => prev.filter(item => item.id !== cartId));
   };
 
   const cartTotal = cart.reduce((sum, item) => sum + item.product.price * item.quantity, 0);
   const cartItemCount = cart.reduce((sum, item) => sum + item.quantity, 0);
 
-  const filterProducts = activeCategory === 'Todos' ? mockProducts : mockProducts.filter(p => p.category === activeCategory);
+  const filterProducts = activeCategory === 'Todos' ? products : products.filter(p => p.category === activeCategory);
 
-  const confirmOrder = () => {
-    // Save to Orders
-    const newOrder = {
-      id: `ORD-${Math.floor(1000 + Math.random() * 9000)}`,
-      date: new Date().toLocaleDateString('pt-BR'),
-      status: 'RECEBIDO E PREPARANDO',
-      total: cartTotal,
-      items: cartItemCount,
-      itemsDetail: cart.map(c => ({ name: c.product.title, qty: c.quantity, price: c.product.price })),
-      delivery: deliveryMethod === 'home' ? `Em Casa - ${address}` : `Retirada - ${pickupDay}`
-    };
-    setOrders([newOrder, ...orders]);
-    // Clear
-    setIsPixPaid(false);
-    setCart([]);
-    setDeliveryMethod('church');
-    setPickupDay(null);
-    setCurrentView('success');
+  const [isSaving, setIsSaving] = useState(false);
+
+  const confirmOrder = async () => {
+    setIsSaving(true);
+    try {
+      const deliveryString = deliveryMethod === 'home' 
+        ? `Entrega: ${endRua}, ${endNumero} (CEP: ${cep}) - A/C: ${endAC} | Horário: ${endHorario}`
+        : `Retirada: ${pickupDay}`;
+
+      const itemsPayload = cart.map(c => ({
+         name: c.product.title,
+         qty: c.quantity,
+         price: c.product.price,
+         obs: c.observation
+      }));
+
+      const baseUrl = Platform.OS === 'android' ? 'http://10.0.2.2:3000' : 'http://localhost:3000';
+      const session = await fetchAuthSession();
+      const token = session.tokens?.idToken?.toString();
+      
+      const payloadEmail = session.tokens?.idToken?.payload?.email as string;
+      const payloadUsername = session.tokens?.idToken?.payload?.['cognito:username'] as string;
+      const finalUserName = payloadEmail || payloadUsername || 'Membro do App';
+      
+      const res = await fetch(`${baseUrl}/pdv/orders`, {
+         method: 'POST',
+         headers: { 
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json'
+         },
+         body: JSON.stringify({
+           user_name: finalUserName,
+           delivery_method: deliveryMethod,
+           delivery_details: deliveryString,
+           items_json: itemsPayload,
+           total_price: cartTotal
+         })
+      });
+
+      if (res.ok) {
+        const { id } = await res.json();
+        const newOrder = {
+          id: id.substring(0, 8).toUpperCase(),
+          date: new Date().toLocaleDateString('pt-BR'),
+          status: 'RECEBIDO E PREPARANDO',
+          total: cartTotal,
+          items: cartItemCount,
+          itemsDetail: itemsPayload,
+          delivery: deliveryString
+        };
+        setOrders([newOrder, ...orders]);
+        
+        // Limpar sacola e estados...
+        setCart([]);
+        setDeliveryMethod('church');
+        setPickupDay(null);
+        setCep(''); setEndRua(''); setEndNumero(''); setEndAC(''); setEndHorario('');
+        setCurrentView('success');
+      } else {
+        alert("Erro ao processar o seu pedido. Tente novamente.");
+      }
+    } catch(e) {
+       console.log(e);
+       alert("Erro de comunicação com servidor.");
+    } finally {
+       setIsSaving(false);
+    }
   };
 
   const renderHeader = (title: string, backAction: () => void, rightAction?: React.ReactNode) => (
@@ -135,7 +227,7 @@ export default function StoreScreen() {
             
             {/* Categories */}
             <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.catScroll}>
-              {categories.map(cat => (
+              {dynamicCats.map(cat => (
                 <TouchableOpacity 
                   key={cat} 
                   style={[styles.catBadge, { backgroundColor: activeCategory === cat ? primaryBrand : cardColor }]}
@@ -147,20 +239,46 @@ export default function StoreScreen() {
             </ScrollView>
 
             <View style={styles.productGrid}>
-              {filterProducts.map(product => (
-                <View key={product.id} style={[styles.productCard, { backgroundColor: cardColor }]}>
-                  <Image source={{ uri: product.image }} style={styles.productImage} />
-                  <View style={styles.productInfo}>
-                    <Text style={[styles.productCategory, { color: primaryBrand }]}>{product.category}</Text>
-                    <Text style={[styles.productTitle, { color: textColor }]} numberOfLines={2}>{product.title}</Text>
-                    <Text style={[styles.productPrice, { color: textColor }]}>{formatPrice(product.price)}</Text>
-                  </View>
-                  <TouchableOpacity style={styles.addBtn} onPress={() => addToCart(product)}>
-                    <Text style={styles.addBtnText}>Adicionar</Text>
-                    <Feather name="plus" size={16} color="#FFF" />
+              {filterProducts.map(product => {
+                const photo = (Array.isArray(product.image_urls) && product.image_urls.length > 0) ? product.image_urls[0] : null;
+                const cartQty = cart.filter(c => c.product.id === product.id).reduce((sum, c) => sum + c.quantity, 0);
+
+                return (
+                  <TouchableOpacity 
+                    key={product.id} 
+                    style={[styles.productCard, { backgroundColor: cardColor, borderColor: cartQty > 0 ? primaryBrand : 'transparent', borderWidth: cartQty > 0 ? 2 : 0 }]}
+                    activeOpacity={0.8}
+                    onPress={() => addToCart(product)}
+                    onLongPress={() => {
+                      setQtdSelect(1);
+                      setObsText('');
+                      setShowModal(product);
+                    }}
+                    delayLongPress={400}
+                  >
+                    
+                    {/* Badge Indicador de Seleção */}
+                    {cartQty > 0 && (
+                      <View style={styles.selectedBadge}>
+                        <Text style={styles.selectedBadgeText}>{cartQty}</Text>
+                      </View>
+                    )}
+
+                    {photo ? (
+                      <Image source={{ uri: photo }} style={styles.productImage} />
+                    ) : (
+                      <View style={[styles.productImage, { justifyContent: 'center', alignItems: 'center' }]}>
+                        <Feather name="image" size={32} color={borderColor} />
+                      </View>
+                    )}
+                    <View style={styles.productInfo}>
+                      <Text style={[styles.productCategory, { color: primaryBrand }]}>{product.category}</Text>
+                      <Text style={[styles.productTitle, { color: textColor }]} numberOfLines={2}>{product.title}</Text>
+                      <Text style={[styles.productPrice, { color: textColor }]}>{formatPrice(product.price)}</Text>
+                    </View>
                   </TouchableOpacity>
-                </View>
-              ))}
+                );
+              })}
             </View>
 
           </ScrollView>
@@ -178,6 +296,62 @@ export default function StoreScreen() {
               </TouchableOpacity>
             </View>
           )}
+
+          {/* Modal de Observação via LongPress */}
+          <Modal visible={!!showModal} animationType="fade" transparent={true}>
+            <View style={styles.modalBg}>
+               <View style={[styles.modalBox, { backgroundColor: cardColor }]}>
+                  {showModal && (
+                    <>
+                      <Text style={[styles.modalTitle, { color: textColor }]}>{showModal.title}</Text>
+                      <Text style={{ fontSize: 16, color: primaryBrand, fontWeight: '800', marginBottom: 24 }}>{formatPrice(showModal.price)}</Text>
+
+                      <Text style={[styles.inputLabel, { color: textMuted }]}>Quantidade Desejada</Text>
+                      <View style={styles.stepperContainer}>
+                         <TouchableOpacity style={[styles.stepperBtn, { backgroundColor: bgColor }]} onPress={() => setQtdSelect(Math.max(1, (Number(qtdSelect) || 1) - 1))}>
+                            <Feather name="minus" size={20} color={textColor} />
+                         </TouchableOpacity>
+                         
+                         <TextInput 
+                           style={[styles.stepperValueInput, { color: textColor, backgroundColor: isDark ? '#1a2130' : '#f0f0f0' }]}
+                           keyboardType="numeric"
+                           maxLength={4}
+                           value={String(qtdSelect)}
+                           onChangeText={(val) => {
+                             const num = parseInt(val.replace(/[^0-9]/g, ''), 10);
+                             setQtdSelect(isNaN(num) ? '' : num);
+                           }}
+                         />
+
+                         <TouchableOpacity style={[styles.stepperBtn, { backgroundColor: primaryBrand }]} onPress={() => setQtdSelect((Number(qtdSelect) || 0) + 1)}>
+                            <Feather name="plus" size={20} color="#FFF" />
+                         </TouchableOpacity>
+                      </View>
+
+                      <Text style={[styles.inputLabel, { color: textMuted }]}>Observações Gerais (Opcional)</Text>
+                      <TextInput 
+                        style={[styles.modalInput, { color: textColor, borderColor, backgroundColor: bgColor, minHeight: 80 }]}
+                        placeholder="Ex: Embalar para presente, cor específica..."
+                        placeholderTextColor={textMuted}
+                        multiline={true}
+                        value={obsText}
+                        onChangeText={setObsText}
+                      />
+
+                      <View style={{ flexDirection: 'row', gap: 12, marginTop: 24 }}>
+                        <TouchableOpacity style={[styles.actionBtn, { backgroundColor: bgColor, flex: 1 }]} onPress={() => setShowModal(null)}>
+                           <Text style={{ color: textColor, fontWeight: '600' }}>Cancelar</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity style={[styles.actionBtn, { backgroundColor: primaryBrand, flex: 2 }]} onPress={() => addToCart(showModal, Number(qtdSelect) || 1, obsText)}>
+                           <Text style={{ color: '#FFF', fontWeight: '800' }}>Adicionar</Text>
+                           <Feather name="plus" size={18} color="#FFF" style={{ marginLeft: 8 }} />
+                        </TouchableOpacity>
+                      </View>
+                    </>
+                  )}
+               </View>
+            </View>
+          </Modal>
         </SafeAreaView>
       </>
     );
@@ -197,13 +371,20 @@ export default function StoreScreen() {
              <>
                 {cart.map(item => (
                   <View key={item.product.id} style={[styles.cartItem, { backgroundColor: cardColor }]}>
-                    <Image source={{ uri: item.product.image }} style={styles.cartItemImg} />
+                    {Array.isArray(item.product.image_urls) && item.product.image_urls[0] ? (
+                      <Image source={{ uri: item.product.image_urls[0] }} style={styles.cartItemImg} />
+                    ) : (
+                      <View style={[styles.cartItemImg, { justifyContent: 'center', alignItems: 'center' }]}>
+                        <Feather name="image" size={20} color={borderColor} />
+                      </View>
+                    )}
                     <View style={styles.cartItemInfo}>
                       <Text style={[styles.cartItemTitle, { color: textColor }]} numberOfLines={2}>{item.product.title}</Text>
+                      {!!item.observation && <Text style={{ color: '#FF9500', fontSize: 13, fontWeight: '600', marginBottom: 4 }}>Obs: {item.observation}</Text>}
                       <Text style={[styles.cartItemPrice, { color: textColor }]}>{formatPrice(item.product.price)}</Text>
                       <Text style={[styles.cartItemQty, { color: textMuted }]}>Qtd: {item.quantity}</Text>
                     </View>
-                    <TouchableOpacity onPress={() => removeFromCart(item.product.id)}>
+                    <TouchableOpacity onPress={() => removeFromCart(item.id)}>
                       <Feather name="trash-2" size={20} color="#FF3B30" />
                     </TouchableOpacity>
                   </View>
@@ -254,14 +435,14 @@ export default function StoreScreen() {
 
           {deliveryMethod === 'church' && (
             <View style={[styles.subpanel, { backgroundColor: cardColor, borderColor }]}>
-              <Text style={[styles.subpanelTitle, { color: textColor }]}>Selecione o Dia para Retirada</Text>
-              <TouchableOpacity onPress={() => setPickupDay('Sexta-feira')} style={[styles.radioItem, { backgroundColor: pickupDay === 'Sexta-feira' ? `${primaryBrand}15` : 'transparent' }]}>
-                <Feather name={pickupDay === 'Sexta-feira' ? 'check-circle' : 'circle'} size={20} color={pickupDay === 'Sexta-feira' ? primaryBrand : textMuted} />
-                <Text style={{ marginLeft: 12, color: textColor, fontWeight: '600' }}>Culto de Sexta (19h30 - 21h30)</Text>
+              <Text style={[styles.subpanelTitle, { color: textColor }]}>Onde você vai retirar?</Text>
+              <TouchableOpacity onPress={() => setPickupDay('Retirar no Balcão / Ponto de Coleta')} style={[styles.radioItem, { backgroundColor: pickupDay === 'Retirar no Balcão / Ponto de Coleta' ? `${primaryBrand}15` : 'transparent' }]}>
+                <Feather name={pickupDay === 'Retirar no Balcão / Ponto de Coleta' ? 'check-circle' : 'circle'} size={20} color={pickupDay === 'Retirar no Balcão / Ponto de Coleta' ? primaryBrand : textMuted} />
+                <Text style={{ marginLeft: 12, color: textColor, fontWeight: '600' }}>Retirar no Balcão / Ponto de Coleta</Text>
               </TouchableOpacity>
-              <TouchableOpacity onPress={() => setPickupDay('Domingo')} style={[styles.radioItem, { backgroundColor: pickupDay === 'Domingo' ? `${primaryBrand}15` : 'transparent' }]}>
-                <Feather name={pickupDay === 'Domingo' ? 'check-circle' : 'circle'} size={20} color={pickupDay === 'Domingo' ? primaryBrand : textMuted} />
-                <Text style={{ marginLeft: 12, color: textColor, fontWeight: '600' }}>Culto de Domingo (18h00 - 20h30)</Text>
+              <TouchableOpacity onPress={() => setPickupDay('Retirar ao Final do Culto')} style={[styles.radioItem, { backgroundColor: pickupDay === 'Retirar ao Final do Culto' ? `${primaryBrand}15` : 'transparent' }]}>
+                <Feather name={pickupDay === 'Retirar ao Final do Culto' ? 'check-circle' : 'circle'} size={20} color={pickupDay === 'Retirar ao Final do Culto' ? primaryBrand : textMuted} />
+                <Text style={{ marginLeft: 12, color: textColor, fontWeight: '600' }}>Retirar ao Final do Culto</Text>
               </TouchableOpacity>
             </View>
           )}
@@ -269,52 +450,34 @@ export default function StoreScreen() {
           {deliveryMethod === 'home' && (
             <View style={[styles.subpanel, { backgroundColor: cardColor, borderColor }]}>
               <Text style={[styles.subpanelTitle, { color: textColor }]}>Endereço de Entrega</Text>
-              <TextInput 
-                style={[styles.input, { borderColor, color: textColor, backgroundColor: bgColor }]}
-                placeholder="Rua, Número, Bairro, Cidade, CEP..."
-                placeholderTextColor={textMuted}
-                value={address}
-                onChangeText={setAddress}
-                multiline
-              />
-              <Text style={{ color: textMuted, fontSize: 12, marginTop: 8 }}>Taxas de entrega serão comunicadas diretamente no seu WhatsApp antes do envio.</Text>
+              
+              <Text style={[styles.inputLabel, { color: textMuted, marginTop: 8 }]}>CEP</Text>
+              <TextInput style={[styles.inputForm, { borderColor, color: textColor, backgroundColor: bgColor }]} placeholder="00000-000" placeholderTextColor={textMuted} value={cep} onChangeText={setCep} keyboardType="numeric" />
+              
+              <Text style={[styles.inputLabel, { color: textMuted, marginTop: 12 }]}>Rua / Endereço</Text>
+              <TextInput style={[styles.inputForm, { borderColor, color: textColor, backgroundColor: bgColor }]} placeholder="Nome da rua..." placeholderTextColor={textMuted} value={endRua} onChangeText={setEndRua} />
+              
+              <Text style={[styles.inputLabel, { color: textMuted, marginTop: 12 }]}>Número e Complemento</Text>
+              <TextInput style={[styles.inputForm, { borderColor, color: textColor, backgroundColor: bgColor }]} placeholder="Ex: 123, Apto 4" placeholderTextColor={textMuted} value={endNumero} onChangeText={setEndNumero} />
+              
+              <Text style={[styles.inputLabel, { color: textMuted, marginTop: 12 }]}>A/C (Aos cuidados de)</Text>
+              <TextInput style={[styles.inputForm, { borderColor, color: textColor, backgroundColor: bgColor }]} placeholder="Quem vai receber?" placeholderTextColor={textMuted} value={endAC} onChangeText={setEndAC} />
+              
+              <Text style={[styles.inputLabel, { color: textMuted, marginTop: 12 }]}>Preferência de Horário</Text>
+              <TextInput style={[styles.inputForm, { borderColor, color: textColor, backgroundColor: bgColor }]} placeholder="Ex: Manhã, ou Após as 18h" placeholderTextColor={textMuted} value={endHorario} onChangeText={setEndHorario} />
+
+              <Text style={{ color: textMuted, fontSize: 12, marginTop: 16 }}>Taxas de entrega e link de pagamento serão enviados via WhatsApp após confirmação.</Text>
             </View>
           )}
 
-          <Text style={[styles.sectionTitle, { color: textColor, marginTop: 32 }]}>Pagamento via PIX</Text>
-          <View style={[styles.pixCard, { backgroundColor: cardColor, borderColor }]}>
-            <View style={{ alignItems: 'center', marginBottom: 20 }}>
-              <View style={styles.qrCodeMock}>
-                <Feather name="maximize" size={48} color={textMuted} />
-                <Text style={{ color: textMuted, fontSize: 10, marginTop: 8 }}>QR CODE PIX</Text>
-              </View>
-              <Text style={[styles.pixValue, { color: textColor }]}>{formatPrice(cartTotal)}</Text>
-            </View>
-
-            <TouchableOpacity style={styles.copyPixBtn}>
-              <Feather name="copy" size={18} color="#FFF" />
-              <Text style={{ color: '#FFF', fontWeight: '700', marginLeft: 8 }}>Copiar Pix Copia e Cola</Text>
-            </TouchableOpacity>
-
-            {!isPixPaid ? (
-              <TouchableOpacity style={[styles.validatePixBtn, { borderColor }]} onPress={() => setIsPixPaid(true)}>
-                <Feather name="refresh-cw" size={16} color={textMuted} />
-                <Text style={[styles.validatePixText, { color: textMuted }]}>Simular Pagamento Aprovado</Text>
-              </TouchableOpacity>
-            ) : (
-              <View style={styles.paidSuccess}>
-                <Feather name="check-circle" size={24} color="#00C464" />
-                <Text style={{ color: '#00C464', fontWeight: '800', marginLeft: 8, fontSize: 16 }}>Pagamento Validado!</Text>
-              </View>
-            )}
-          </View>
-
         </ScrollView>
-        {isPixPaid && (deliveryMethod === 'home' ? address : pickupDay) && (
+
+        {/* Action button appears once conditions are met */}
+        {((deliveryMethod === 'home' && endRua && endNumero) || (deliveryMethod === 'church' && pickupDay)) && (
           <View style={[styles.floatingCart, { backgroundColor: cardColor, borderTopColor: borderColor }]}>
-            <TouchableOpacity style={[styles.checkoutBtn, { flex: 1, backgroundColor: '#00C464' }]} onPress={confirmOrder}>
-              <Text style={styles.checkoutBtnText}>Confirmar Pedido</Text>
-              <Feather name="check" size={18} color="#FFF" style={{ marginLeft: 8 }} />
+            <TouchableOpacity style={[styles.checkoutBtn, { flex: 1, backgroundColor: primaryBrand, justifyContent: 'center' }]} onPress={confirmOrder} disabled={isSaving}>
+              <Text style={styles.checkoutBtnText}>{isSaving ? 'Enviando...' : 'Enviar Pedido para a Igreja'}</Text>
+              {!isSaving && <Feather name="send" size={18} color="#FFF" style={{ marginLeft: 8 }} />}
             </TouchableOpacity>
           </View>
         )}
@@ -396,9 +559,10 @@ export default function StoreScreen() {
           <View style={[styles.listContainer, { backgroundColor: cardColor }]}>
              {selectedOrder.itemsDetail.map((itm: any, idx: number) => (
                 <View key={idx} style={{ flexDirection: 'row', justifyContent: 'space-between', padding: 16, borderBottomWidth: idx === selectedOrder.itemsDetail.length - 1 ? 0 : 1, borderBottomColor: borderColor }}>
-                   <View style={{ flex: 1, marginRight: 16 }}>
-                     <Text style={{ color: textColor, fontWeight: '600' }}>{itm.qty}x {itm.name}</Text>
-                   </View>
+                     <View style={{ flex: 1, marginRight: 16 }}>
+                       <Text style={{ color: textColor, fontWeight: '600' }}>{itm.qty}x {itm.name}</Text>
+                       {!!itm.obs && <Text style={{ color: '#FF9500', fontSize: 12, marginTop: 4 }}>Obs: {itm.obs}</Text>}
+                     </View>
                    <Text style={{ color: textColor, fontWeight: '800' }}>{formatPrice(itm.price * itm.qty)}</Text>
                 </View>
              ))}
@@ -427,14 +591,24 @@ const styles = StyleSheet.create({
   catBadge: { paddingHorizontal: 20, paddingVertical: 8, borderRadius: 20, marginRight: 12, justifyContent: 'center', height: 38 },
   catText: { fontSize: 14, fontWeight: '700' },
   productGrid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', paddingBottom: 60 },
-  productCard: { width: '48%', borderRadius: 16, overflow: 'hidden', marginBottom: 16, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.05, shadowRadius: 8, elevation: 3 },
-  productImage: { width: '100%', height: 160, backgroundColor: '#EAEAEA' },
+  productCard: { width: '48%', borderRadius: 16, overflow: 'hidden', marginBottom: 16, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.05, shadowRadius: 8, elevation: 3, position: 'relative' },
+  productImage: { width: '100%', height: 160, backgroundColor: 'rgba(0,0,0,0.02)' },
+  selectedBadge: { position: 'absolute', top: 8, right: 8, backgroundColor: '#00C464', minWidth: 26, height: 26, paddingHorizontal: 6, borderRadius: 13, justifyContent: 'center', alignItems: 'center', zIndex: 10, shadowColor: '#00C464', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.4, shadowRadius: 6, elevation: 5 },
+  selectedBadgeText: { color: '#FFF', fontWeight: '900', fontSize: 13 },
   productInfo: { padding: 12 },
   productCategory: { fontSize: 10, fontWeight: '800', marginBottom: 4, textTransform: 'uppercase' },
   productTitle: { fontSize: 14, fontWeight: '700', marginBottom: 8, height: 40 },
   productPrice: { fontSize: 16, fontWeight: '900' },
-  addBtn: { backgroundColor: '#5bc3bb', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: 12 },
-  addBtnText: { color: '#FFF', fontWeight: '800', marginRight: 6 },
+  
+  modalBg: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
+  modalBox: { margin: 24, padding: 24, borderRadius: 24, shadowColor: '#000', shadowOffset: { width: 0, height: -4 }, shadowOpacity: 0.1, shadowRadius: 20, elevation: 10 },
+  modalTitle: { fontSize: 22, fontWeight: '900', marginBottom: 6 },
+  stepperContainer: { flexDirection: 'row', alignItems: 'center', marginBottom: 20 },
+  stepperBtn: { width: 48, height: 48, borderRadius: 24, justifyContent: 'center', alignItems: 'center' },
+  stepperValueInput: { fontSize: 24, fontWeight: '900', marginHorizontal: 16, minWidth: 80, textAlign: 'center', borderRadius: 12, paddingVertical: 8 },
+  inputLabel: { fontSize: 12, fontWeight: '800', color: '#9BA1A6', textTransform: 'uppercase', marginBottom: 10 },
+  modalInput: { borderWidth: 1, borderRadius: 16, padding: 16, fontSize: 16, textAlignVertical: 'top' },
+  actionBtn: { padding: 16, borderRadius: 16, alignItems: 'center', justifyContent: 'center', flexDirection: 'row' },
   
   // Floating Cart
   floatingCart: { position: 'absolute', bottom: 0, left: 0, right: 0, borderTopWidth: 1, paddingHorizontal: 20, paddingTop: 16, paddingBottom: Platform.OS === 'ios' ? 34 : 20, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
@@ -460,6 +634,7 @@ const styles = StyleSheet.create({
   subpanelTitle: { fontSize: 15, fontWeight: '800', marginBottom: 16 },
   radioItem: { flexDirection: 'row', alignItems: 'center', padding: 12, borderRadius: 12, marginBottom: 8 },
   input: { borderWidth: 1, borderRadius: 12, padding: 16, minHeight: 80, fontSize: 15 },
+  inputForm: { borderWidth: 1, borderRadius: 12, padding: 14, fontSize: 15 },
   
   pixCard: { padding: 24, borderRadius: 24, borderWidth: 1, alignItems: 'center' },
   qrCodeMock: { width: 150, height: 150, borderWidth: 2, borderStyle: 'dashed', borderColor: '#CCC', borderRadius: 16, justifyContent: 'center', alignItems: 'center' },

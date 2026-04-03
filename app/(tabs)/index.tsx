@@ -5,7 +5,9 @@ import { useAuth } from '@/context/AuthContext';
 import { useRouter } from 'expo-router';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import YoutubePlayer from 'react-native-youtube-iframe';
+import { WebView } from 'react-native-webview';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { fetchAuthSession, getCurrentUser } from 'aws-amplify/auth';
 
 const { width } = Dimensions.get('window');
 
@@ -30,8 +32,15 @@ export default function HomeScreen() {
   const [showNotifications, setShowNotifications] = useState(false);
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
   const [lgpdConsent, setLgpdConsent] = useState<boolean>(true);
-  const liveVideoId = "jfKfPfyJRdk"; // Replace with your church's actual YouTube live video ID 
+  const [activeBroadcast, setActiveBroadcast] = useState<any>(null);
+  const [memberProfile, setMemberProfile] = useState<any>(null);
+  const [featuredEvent, setFeaturedEvent] = useState<any>(null);
   
+  const extractVideoId = (url: string) => {
+    if (!url) return null;
+    const match = url.match(/(?:youtu\.be\/|youtube\.com\/(?:embed\/|v\/|live\/|watch\?v=|watch\?.+&v=))([^&?\s]{11})/);
+    return match ? match[1] : null;
+  };
   useEffect(() => {
     const loadState = async () => {
       const savedAvatar = await AsyncStorage.getItem('user_avatar');
@@ -39,8 +48,60 @@ export default function HomeScreen() {
       
       const savedLgpd = await AsyncStorage.getItem('lgpd_consent');
       if (savedLgpd !== null) setLgpdConsent(savedLgpd === 'true');
+
+      // Fetch dynamic backend user info!
+      try {
+        const user = await getCurrentUser();
+        if (user?.userId) {
+          const baseUrl = Platform.OS === 'android' ? 'http://10.0.2.2:3000' : 'http://localhost:3000';
+          const userRes = await fetch(`${baseUrl}/members/${user.userId}?t=${Date.now()}`);
+          if (userRes.ok) {
+            const userData = await userRes.json();
+            setMemberProfile(userData.data);
+          }
+        }
+      } catch (err) {
+        console.log("Error loading member session details", err);
+      }
     };
+    
+    const fetchBroadcast = async () => {
+      try {
+        const baseUrl = Platform.OS === 'android' ? 'http://10.0.2.2:3000' : 'http://localhost:3000';
+        const res = await fetch(`${baseUrl}/broadcasts/active`);
+        if (res.ok) {
+          const data = await res.json();
+          setActiveBroadcast(data);
+        }
+      } catch (err) {
+        console.log("Erro ao buscar live:", err);
+      }
+    };
+
+    const fetchFeaturedEvent = async () => {
+      try {
+        const baseUrl = Platform.OS === 'android' ? 'http://10.0.2.2:3000' : 'http://localhost:3000';
+        const res = await fetch(`${baseUrl}/events`);
+        if (res.ok) {
+          const { data } = await res.json();
+          if (data && data.length > 0) {
+            const featured = data.find((e: any) => e.is_featured === 1);
+            if (featured) {
+              setFeaturedEvent(featured);
+            } else {
+              const newest = [...data].sort((a, b) => new Date(b.created_at || b.start_date).getTime() - new Date(a.created_at || a.start_date).getTime());
+              setFeaturedEvent(newest[0]);
+            }
+          }
+        }
+      } catch (err) {
+        console.log("Erro fetch eventos home:", err);
+      }
+    };
+
     loadState();
+    fetchBroadcast();
+    fetchFeaturedEvent();
   }, []);
 
   const changeAvatar = async () => {
@@ -117,63 +178,88 @@ export default function HomeScreen() {
           decelerationRate="fast"
         >
           {/* Card 1 - LIVE STREAM */}
-          <View style={[styles.featuredCard, { backgroundColor: '#5bc3bb', overflow: 'hidden', padding: isPlayingLive ? 0 : 24 }]}>
-            {isPlayingLive ? (
-              <View style={{ width: '100%', height: '100%', borderRadius: 28, overflow: 'hidden' }}>
-                <YoutubePlayer
-                  height={250}
-                  play={true}
-                  videoId={liveVideoId}
-                  webViewStyle={{ opacity: 0.99 }} // fixing android rendering quirks
-                />
-                <TouchableOpacity 
-                  style={{ position: 'absolute', top: 10, right: 10, backgroundColor: 'rgba(0,0,0,0.5)', padding: 8, borderRadius: 20 }}
-                  onPress={() => setIsPlayingLive(false)}
-                >
-                  <Feather name="x" size={20} color="#FFF" />
-                </TouchableOpacity>
-              </View>
-            ) : (
-              <>
-                <View style={styles.liveBadge}>
-                  <View style={styles.liveDot} />
-                  <Text style={styles.liveText}>AO VIVO</Text>
+          {activeBroadcast && (
+            <View style={[styles.featuredCard, { backgroundColor: '#5bc3bb', overflow: 'hidden', padding: isPlayingLive ? 0 : 24 }]}>
+              {isPlayingLive ? (
+                <View style={{ width: '100%', height: '100%', borderRadius: 28, overflow: 'hidden' }}>
+                  {extractVideoId(activeBroadcast.youtube_url) ? (
+                    <YoutubePlayer
+                      height={250}
+                      play={true}
+                      videoId={extractVideoId(activeBroadcast.youtube_url)}
+                      webViewStyle={{ opacity: 0.99 }} // fixing android rendering quirks
+                    />
+                  ) : (
+                    <WebView
+                      source={{ uri: activeBroadcast.youtube_url }}
+                      style={{ height: 250, width: '100%', opacity: 0.99 }}
+                      javaScriptEnabled={true}
+                      allowsInlineMediaPlayback={true}
+                      mediaPlaybackRequiresUserAction={false}
+                    />
+                  )}
+                  <TouchableOpacity 
+                    style={{ position: 'absolute', top: 10, right: 10, backgroundColor: 'rgba(0,0,0,0.5)', padding: 8, borderRadius: 20 }}
+                    onPress={() => setIsPlayingLive(false)}
+                  >
+                    <Feather name="x" size={20} color="#FFF" />
+                  </TouchableOpacity>
                 </View>
-                <Text style={styles.cardTitle}>Culto de Celebração</Text>
-                <Text style={styles.cardSubtitle}>
-                  Acompanhe a palavra ao vivo agora mesmo com a nossa família.
-                </Text>
-                <TouchableOpacity style={styles.cardButton} activeOpacity={0.8} onPress={() => setIsPlayingLive(true)}>
-                  <View style={styles.cardButtonIcon}>
-                    <Feather name="play" size={14} color="#5bc3bb" style={{ marginLeft: 3 }} />
+              ) : (
+                <>
+                  <View style={styles.liveBadge}>
+                    <View style={styles.liveDot} />
+                    <Text style={styles.liveText}>AO VIVO</Text>
                   </View>
-                  <Text style={styles.cardButtonText}>Assistir Transmissão</Text>
-                </TouchableOpacity>
-              </>
-            )}
-          </View>
-
-          {/* Card 2 */}
-          <View style={[styles.featuredCard, { backgroundColor: '#FF9500' }]}>
-            <View style={[styles.liveBadge, { backgroundColor: 'rgba(255,255,255,0.2)' }]}>
-              <Feather name="calendar" size={12} color="#FFF" style={{ marginRight: 4 }} />
-              <Text style={styles.liveText}>EVENTO</Text>
+                  <Text style={styles.cardTitle}>{activeBroadcast.title}</Text>
+                  <Text style={styles.cardSubtitle}>
+                    {activeBroadcast.description || 'Acompanhe a palavra ao vivo agora mesmo com a nossa família.'}
+                  </Text>
+                  <TouchableOpacity style={styles.cardButton} activeOpacity={0.8} onPress={() => setIsPlayingLive(true)}>
+                    <View style={styles.cardButtonIcon}>
+                      <Feather name="play" size={14} color="#5bc3bb" style={{ marginLeft: 3 }} />
+                    </View>
+                    <Text style={styles.cardButtonText}>Assistir Transmissão</Text>
+                  </TouchableOpacity>
+                </>
+              )}
             </View>
-            <Text style={styles.cardTitle}>Acampamento Jovem</Text>
-            <Text style={styles.cardSubtitle}>
-              Lote virando em poucas horas! Garanta sua vaga agora mesmo.
-            </Text>
+          )}
+
+          {/* Card 2 - FEATURED EVENT */}
+          {featuredEvent && (
             <TouchableOpacity 
-              style={styles.cardButton} 
-              activeOpacity={0.8}
-              onPress={() => router.push('/event/signup' as any)}
+              activeOpacity={0.9} 
+              onPress={() => router.push(`/events/${featuredEvent.id}`)}
+              style={[styles.featuredCard, { backgroundColor: featuredEvent.type === 1 ? '#0a7ea4' : '#FF9500', padding: 0, overflow: 'hidden' }]}
             >
-              <View style={[styles.cardButtonIcon, { backgroundColor: '#FFF' }]}>
-                <Feather name="chevron-right" size={16} color="#FF9500" />
+              <Image source={{ uri: featuredEvent.image_url }} style={{ width: '100%', height: '100%', position: 'absolute', opacity: 0.6 }} />
+              <View style={{ width: '100%', height: '100%', backgroundColor: 'rgba(0,0,0,0.4)', position: 'absolute' }} />
+              
+              <View style={{ padding: 24, flex: 1, justifyContent: 'space-between' }}>
+                <View style={[styles.liveBadge, { backgroundColor: featuredEvent.is_featured === 1 ? '#FFD700' : 'rgba(255,255,255,0.3)' }]}>
+                  {featuredEvent.is_featured === 1 ? (
+                     <Text style={[styles.liveText, { color: '#111' }]}>🌟 DESTAQUE</Text>
+                  ) : (
+                     <Text style={styles.liveText}>{featuredEvent.type === 1 ? 'CURSO RECENTE' : 'PRÓXIMO EVENTO'}</Text>
+                  )}
+                </View>
+
+                <View>
+                  <Text style={styles.cardTitle} numberOfLines={2}>{featuredEvent.title}</Text>
+                  <Text style={styles.cardSubtitle} numberOfLines={2}>
+                    {featuredEvent.description}
+                  </Text>
+                  <View style={styles.cardButton}>
+                    <View style={[styles.cardButtonIcon, { backgroundColor: '#FFF' }]}>
+                      <Feather name="chevron-right" size={16} color={featuredEvent.type === 1 ? '#0a7ea4' : '#FF9500'} />
+                    </View>
+                    <Text style={styles.cardButtonText}>Me Inscrever</Text>
+                  </View>
+                </View>
               </View>
-              <Text style={styles.cardButtonText}>Fazer Inscrição</Text>
             </TouchableOpacity>
-          </View>
+          )}
         </ScrollView>
 
         {/* ACESSO RÁPIDO */}
@@ -202,7 +288,7 @@ export default function HomeScreen() {
         {/* EVENTOS & CURSOS HUB BANNER */}
         <TouchableOpacity 
           style={[styles.hubBanner, { backgroundColor: isDark ? '#1E1E1E' : '#e4f5f4', borderColor: isDark ? '#333' : 'transparent', borderWidth: 1 }]}
-          onPress={() => router.push('/event' as any)}
+          onPress={() => router.push('/events')}
           activeOpacity={0.8}
         >
           <View style={styles.hubBannerContent}>
@@ -290,19 +376,21 @@ export default function HomeScreen() {
 
               <View style={[styles.profileBlock, { borderBottomColor: borderColor }]}>
                 <Text style={[styles.infoLabel, { color: textMuted }]}>CPF</Text>
-                <Text style={[styles.infoValue, { color: textColor }]}>***.123.456-**</Text>
+                <Text style={[styles.infoValue, { color: textColor }]}>{memberProfile?.cpf || '***.123.456-**'}</Text>
               </View>
 
               <View style={[styles.profileBlock, { borderBottomColor: borderColor }]}>
-                <Text style={[styles.infoLabel, { color: textMuted }]}>Endereço Completo</Text>
+                <Text style={[styles.infoLabel, { color: textMuted }]}>Endereço do Membro</Text>
                 <Text style={[styles.infoValue, { color: textColor }]}>Rua das Flores, 123, Sala 4, São Paulo - SP</Text>
               </View>
 
               <View style={[styles.profileBlock, { borderBottomColor: borderColor }]}>
-                <Text style={[styles.infoLabel, { color: textMuted }]}>Célula / Grupo</Text>
-                <Text style={[styles.infoValue, { color: textColor }]}>Nenhum grupo associado.</Text>
+                <Text style={[styles.infoLabel, { color: textMuted }]}>Célula / Grupo Local</Text>
+                <Text style={[styles.infoValue, { color: textColor }]}>{memberProfile?.cell_group_name || 'Nenhum grupo físico associado.'}</Text>
                 <TouchableOpacity onPress={() => { setShowProfile(false); router.push('/(tabs)/groups'); }}>
-                  <Text style={{ color: '#5bc3bb', fontWeight: '800', marginTop: 8 }}>Encontrar uma Célula próxima</Text>
+                  <Text style={{ color: '#5bc3bb', fontWeight: '800', marginTop: 8 }}>
+                    {memberProfile?.cell_group_id ? 'Acessar meu Grupo Local' : 'Encontrar uma Célula próxima'}
+                  </Text>
                 </TouchableOpacity>
               </View>
 

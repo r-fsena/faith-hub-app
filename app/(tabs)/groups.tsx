@@ -1,29 +1,113 @@
-import React, { useState } from 'react';
-import { StyleSheet, View, Text, ScrollView, TouchableOpacity, SafeAreaView, Platform, Image, Modal } from 'react-native';
+import React, { useState, useEffect } from 'react';
+import { StyleSheet, View, Text, ScrollView, TouchableOpacity, SafeAreaView, Platform, Image, Modal, ActivityIndicator } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useRouter } from 'expo-router';
 import { APP_CONFIG } from '@/constants/AppConfig';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
-// Mock do Banco de Dados de Grupos
-const availableGroups = [
-  { id: 'g1', name: 'Aliança', leader: 'Pr. Rafael Sena', day: 'Terças, 20:00', neighborhood: 'Centro', focus: 'Jovens Adultos' },
-  { id: 'g2', name: 'Esperança', leader: 'João e Maria', day: 'Quartas, 19:30', neighborhood: 'Jardim Botânico', focus: 'Casais' },
-  { id: 'g3', name: 'Leão de Judá', leader: 'Lucas Almeida', day: 'Sábados, 18:00', neighborhood: 'Zona Sul', focus: 'Jovens e Adolescentes' },
-];
+import { fetchAuthSession, getCurrentUser } from 'aws-amplify/auth';
 
 export default function GroupsScreen() {
   const router = useRouter();
   const colorScheme = useColorScheme();
   const isDark = colorScheme === 'dark';
 
-  // O usuário está aprovado pré-definidamente no grupo 'g1'
-  const [myGroupId, setMyGroupId] = useState<string | null>('g1');
+  const [myGroupId, setMyGroupId] = useState<string | null>(null);
   const [pendingGroupId, setPendingGroupId] = useState<string | null>(null);
+  const [availableGroups, setAvailableGroups] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   
   // Visão pode ser 'portal' (dentro do próprio grupo) ou 'discover' (explorando outros)
-  const [viewMode, setViewMode] = useState<'portal' | 'discover'>(myGroupId ? 'portal' : 'discover');
+  const [viewMode, setViewMode] = useState<'portal' | 'discover'>('discover');
   const [showSettingsModal, setShowSettingsModal] = useState(false);
+
+  useEffect(() => {
+    loadData();
+  }, []);
+
+  const loadData = async () => {
+    setLoading(true);
+    try {
+      // O cache de AsyncStorage não é mais confiável do que a API
+      // Vamos usar os dados reais do banco de dados na etapa 2!
+
+      const baseUrl = Platform.OS === 'android' ? 'http://10.0.2.2:3000' : 'http://localhost:3000';
+      
+      // 1. Fetch all cell groups
+      const groupsRes = await fetch(`${baseUrl}/cell-groups?t=${Date.now()}`);
+      if (groupsRes.ok) {
+        const groupsJson = await groupsRes.json();
+        setAvailableGroups(groupsJson);
+      }
+
+      // 2. Fetch logged user profile to find their cell mapping
+      try {
+        const user = await getCurrentUser();
+        if (user?.userId) {
+          const userRes = await fetch(`${baseUrl}/members/${user.userId}?t=${Date.now()}`);
+          if (userRes.ok) {
+             const userData = await userRes.json();
+             const userCell = userData.data?.cell_group_id;
+             const userPending = userData.data?.pending_cell_group_id;
+             
+             if (userCell) {
+               setMyGroupId(userCell);
+               setViewMode('portal');
+               setPendingGroupId(null);
+             } else if (userPending) {
+               setMyGroupId(null);
+               setPendingGroupId(userPending);
+               setViewMode('discover');
+             } else {
+               setMyGroupId(null);
+               setPendingGroupId(null);
+               setViewMode('discover');
+             }
+             // Limpeza final do cache fantasma que estava travando testadores
+             await AsyncStorage.removeItem('pendingGroupId');
+          }
+        }
+      } catch (e) {
+         console.log(e);
+      }
+    } catch (err) {
+      console.log('Error pulling groups', err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const onRefresh = async () => {
+    setRefreshing(true);
+    await loadData();
+    setRefreshing(false);
+  };
+
+  const handleRequestJoin = async (id: string) => {
+    // Dispara a API para gravar a intenção real no BD da plataforma primeiro
+    try {
+      const user = await getCurrentUser();
+      if (user?.userId) {
+        const baseUrl = Platform.OS === 'android' ? 'http://10.0.2.2:3000' : 'http://localhost:3000';
+        const response = await fetch(`${baseUrl}/members/${user.userId}/request-cell`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ cellGroupId: id })
+        });
+        
+        if (response.ok) {
+           setPendingGroupId(id);
+           // Não precisamos mais usar AsyncStorage! O banco guardou!
+        } else {
+           console.log("Erro interno ao solicitar.", await response.text());
+        }
+      }
+    } catch (err) {
+      console.log('Erro ao solicitar célula', err);
+    }
+  };
 
   const bgColor = isDark ? '#1a2130' : '#f5f5f5';
   const cardColor = isDark ? '#2c3444' : '#FFFFFF';
@@ -37,8 +121,7 @@ export default function GroupsScreen() {
 
   const renderDiscoveryMode = () => (
     <View style={styles.section}>
-      <Text style={[styles.sectionTitle, { color: textColor }]}>Explorar {termPlural}</Text>
-      <Text style={[styles.sectionSubtitle, { color: textMuted }]}>
+      <Text style={[styles.sectionSubtitle, { color: textMuted, marginTop: 4 }]}>
         Veja todas as opções na nossa igreja, por bairro, liderança e perfil!
       </Text>
 
@@ -49,21 +132,25 @@ export default function GroupsScreen() {
         return (
           <View key={group.id} style={[styles.groupCard, { backgroundColor: cardColor, borderColor }]}>
             <View style={styles.groupCardHeader}>
-              <View>
+              <View style={{ flex: 1, paddingRight: 12 }}>
                 <Text style={[styles.groupName, { color: textColor }]}>{group.name}</Text>
-                <Text style={[styles.groupLeader, { color: textMuted }]}>Líder: {group.leader}</Text>
+                <Text style={[styles.groupLeader, { color: textMuted }]}>
+                  Líder: {group.leader_name || 'A definir'}
+                </Text>
               </View>
-              <View style={[styles.tag, { backgroundColor: isDark ? '#333' : '#f0f0f0' }]}>
-                <Text style={[styles.tagText, { color: textMuted }]}>{group.focus}</Text>
-              </View>
+              {group.focus && (
+                <View style={[styles.tag, { backgroundColor: isDark ? '#333' : '#f0f0f0', maxWidth: 100 }]}>
+                  <Text style={[styles.tagText, { color: textMuted }]} numberOfLines={1}>{group.focus}</Text>
+                </View>
+              )}
             </View>
             <View style={styles.groupInfoRow}>
               <Feather name="calendar" size={14} color={accentColor} />
-              <Text style={[styles.groupInfoText, { color: textColor }]}>{group.day}</Text>
+              <Text style={[styles.groupInfoText, { color: textColor }]}>{group.meeting_day || 'Dia a combinar'} às {group.meeting_time || '--'}</Text>
             </View>
             <View style={styles.groupInfoRow}>
               <Feather name="map-pin" size={14} color={accentColor} />
-              <Text style={[styles.groupInfoText, { color: textColor }]}>Bairro: {group.neighborhood}</Text>
+              <Text style={[styles.groupInfoText, { color: textColor }]}>Bairro: {group.neighborhood || 'Local Principal'}</Text>
             </View>
             
             {isMyGroup ? (
@@ -81,7 +168,7 @@ export default function GroupsScreen() {
             ) : (
               <TouchableOpacity 
                 style={[styles.outlineBtn, { borderColor: accentColor }]}
-                onPress={() => setPendingGroupId(group.id)}
+                onPress={() => handleRequestJoin(group.id)}
               >
                 <Text style={[styles.outlineBtnText, { color: accentColor }]}>Solicitar Participação</Text>
               </TouchableOpacity>
@@ -102,7 +189,7 @@ export default function GroupsScreen() {
         <View style={[styles.heroCard, { backgroundColor: accentColor }]}>
           <View style={styles.heroRow}>
             <View>
-              <Text style={styles.heroPreTitle}>{termSingular.toUpperCase()} {myGroupData?.name.split(' ')[0]}</Text>
+              <Text style={styles.heroPreTitle}>{termSingular.toUpperCase()} {myGroupData?.name?.split(' ')[0]}</Text>
               <Text style={styles.heroTitle}>{myGroupData?.name}</Text>
             </View>
             <View style={styles.avatarGroup}>
@@ -110,15 +197,15 @@ export default function GroupsScreen() {
               <Image source={{ uri: 'https://i.pravatar.cc/150?img=5' }} style={styles.avatarSecondary} />
             </View>
           </View>
-          <Text style={styles.heroParam}>Liderança: {myGroupData?.leader}</Text>
+          <Text style={styles.heroParam}>Liderança: {myGroupData?.leader_name || 'Sede'}</Text>
           <View style={styles.heroDivider} />
           <View style={styles.heroInfoRow}>
             <Feather name="calendar" size={16} color="rgba(255,255,255,0.8)" />
-            <Text style={styles.heroInfoText}>{myGroupData?.day}</Text>
+            <Text style={styles.heroInfoText}>{myGroupData?.meeting_day} às {myGroupData?.meeting_time}</Text>
           </View>
           <View style={styles.heroInfoRow}>
             <Feather name="map-pin" size={16} color="rgba(255,255,255,0.8)" />
-            <Text style={styles.heroInfoText}>{myGroupData?.neighborhood} (Sede)</Text>
+            <Text style={styles.heroInfoText}>{myGroupData?.address || 'Igreja / Base'} - {myGroupData?.neighborhood}</Text>
           </View>
         </View>
 
@@ -170,6 +257,17 @@ export default function GroupsScreen() {
               <Text style={[styles.toolTitle, { color: textColor }]}>Álbum</Text>
               <Text style={[styles.toolDesc, { color: textMuted }]}>Memórias e Fotos</Text>
           </TouchableOpacity>
+
+          <TouchableOpacity 
+            style={[styles.toolCard, { backgroundColor: cardColor, borderColor }]}
+            onPress={() => router.push('/groups/snacks')}
+          >
+              <View style={[styles.iconBox, { backgroundColor: 'rgba(255, 59, 48, 0.1)' }]}>
+                <Feather name="coffee" size={24} color="#FF3B30" />
+              </View>
+              <Text style={[styles.toolTitle, { color: textColor }]}>Partilha</Text>
+              <Text style={[styles.toolDesc, { color: textMuted }]}>Gerenciar Lanches</Text>
+          </TouchableOpacity>
         </View>
       </View>
     );
@@ -184,7 +282,7 @@ export default function GroupsScreen() {
             <Text style={[styles.headerTitle, { color: textColor, marginLeft: 4 }]}>Buscar</Text>
           </TouchableOpacity>
         ) : (
-          <Text style={[styles.headerTitle, { color: textColor }]}>Meus {termPlural}</Text>
+          <Text style={[styles.headerTitle, { color: textColor }]}>Explorar {termPlural}</Text>
         )}
         
         {viewMode === 'portal' && (
@@ -197,9 +295,17 @@ export default function GroupsScreen() {
             </TouchableOpacity>
           </View>
         )}
+        {viewMode === 'discover' && (
+          <TouchableOpacity style={[styles.headerBtn, { padding: 4 }]} onPress={onRefresh} disabled={refreshing}>
+            <Feather name="refresh-cw" size={24} color={refreshing ? textMuted : accentColor} />
+          </TouchableOpacity>
+        )}
       </View>
 
-      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
+      <ScrollView 
+        showsVerticalScrollIndicator={false} 
+        contentContainerStyle={styles.scrollContent}
+      >
         {viewMode === 'discover' && renderDiscoveryMode()}
         {viewMode === 'portal' && renderActivePortal()}
       </ScrollView>
@@ -230,6 +336,18 @@ export default function GroupsScreen() {
           </View>
         </TouchableOpacity>
       </Modal>
+      {/* Global Loading Overlay */}
+      {refreshing && (
+        <Modal transparent={true} animationType="fade" visible={refreshing}>
+          <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'center', alignItems: 'center' }}>
+            <View style={{ backgroundColor: cardColor, padding: 30, borderRadius: 16, alignItems: 'center' }}>
+              <ActivityIndicator size="large" color={accentColor} />
+              <Text style={{ marginTop: 16, fontSize: 16, fontWeight: '600', color: textColor }}>Sincronizando...</Text>
+            </View>
+          </View>
+        </Modal>
+      )}
+
     </SafeAreaView>
   );
 }

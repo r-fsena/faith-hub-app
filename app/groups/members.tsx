@@ -1,29 +1,33 @@
-import React, { useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ScrollView, SafeAreaView, Platform, Image, Linking, Modal, KeyboardAvoidingView, TextInput, ActivityIndicator } from 'react-native';
+import React, { useState, useEffect } from 'react';
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView, SafeAreaView, Platform, Image, Linking, Modal, KeyboardAvoidingView, TextInput, ActivityIndicator, Alert } from 'react-native';
 import { Stack, useRouter } from 'expo-router';
 import { Feather } from '@expo/vector-icons';
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { getCurrentUser, fetchAuthSession } from 'aws-amplify/auth';
 
-const initialMembers = [
-  { id: '1', name: 'Pr. Rafael Sena', role: 'Líder', phone: '+55 11 99999-1111', avatar: 'https://i.pravatar.cc/150?img=11' },
-  { id: '2', name: 'Sarah Sena', role: 'Líder / Adm', phone: '+55 11 99999-2222', avatar: 'https://i.pravatar.cc/150?img=5' },
-  { id: '3', name: 'Lucas Almeida', role: 'Anfitrião', phone: '+55 11 99999-3333', avatar: 'https://i.pravatar.cc/150?img=33' },
-  { id: '4', name: 'Você', role: 'Membro', phone: '+55 11 98888-0000', avatar: 'https://i.pravatar.cc/150?img=12' },
-  { id: '5', name: 'Marcos Costa', role: 'Membro', phone: '+55 11 97777-4444', avatar: 'https://i.pravatar.cc/150?img=60' },
-  { id: '6', name: 'Aline Barros', role: 'Membro', phone: '+55 11 96666-5555', avatar: 'https://i.pravatar.cc/150?img=43' },
-  { id: '7', name: 'José Silva', role: 'Visitante', phone: '+55 11 95555-6666', avatar: 'https://i.pravatar.cc/150?img=15' },
-];
+type Member = {
+  id: string;
+  name: string;
+  email: string;
+  role: string;
+  phone?: string;
+  avatar?: string;
+  status: string;
+};
 
 export default function GroupMembersScreen() {
   const router = useRouter();
   const colorScheme = useColorScheme();
   const isDark = colorScheme === 'dark';
 
-  const [members, setMembers] = useState(initialMembers);
+  const [members, setMembers] = useState<Member[]>([]);
+  const [myGroupId, setMyGroupId] = useState<string>('');
+  
   const [showInviteModal, setShowInviteModal] = useState(false);
   const [inviteEmail, setInviteEmail] = useState('');
   const [inviteName, setInviteName] = useState('');
-  const [isLoading, setIsLoading] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isInviting, setIsInviting] = useState(false);
 
   const bgColor = isDark ? '#1a2130' : '#f5f5f5';
   const cardColor = isDark ? '#2c3444' : '#FFFFFF';
@@ -32,7 +36,56 @@ export default function GroupMembersScreen() {
   const borderColor = isDark ? '#404c60' : '#EAEAEA';
   const accentColor = '#5bc3bb';
 
-  const handleWhatsApp = (phone: string) => {
+  useEffect(() => {
+    loadMembers();
+  }, []);
+
+  const loadMembers = async () => {
+    setIsLoading(true);
+    try {
+      const baseUrl = Platform.OS === 'android' ? 'http://10.0.2.2:3000' : 'http://localhost:3000';
+      
+      let groupId = '';
+
+      try {
+        const user = await getCurrentUser();
+        if (user?.userId) {
+          const userRes = await fetch(`${baseUrl}/members/${user.userId}`);
+          if (userRes.ok) {
+            const userData = await userRes.json();
+            if (userData.data?.cell_group_id) {
+              groupId = userData.data.cell_group_id;
+              setMyGroupId(groupId);
+            }
+          }
+        }
+      } catch (e) { console.log(e); }
+
+      const session = await fetchAuthSession();
+      const token = session.tokens?.idToken?.toString();
+
+      // Buscar Membros da Célula específica
+      if (groupId) {
+         const res = await fetch(`${baseUrl}/members?group_id=${groupId}`, {
+           headers: { 'Authorization': `Bearer ${token}` }
+         });
+         if (res.ok) {
+           const payload = await res.json();
+           setMembers(payload.data || []);
+         }
+      }
+    } catch (err) {
+      console.log('Error loading members:', err);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleWhatsApp = (phone?: string) => {
+    if (!phone) {
+       Alert.alert("Erro", "O membro não cadastrou o número de telefone.");
+       return;
+    }
     const cleanPhone = phone.replace(/\D/g, '');
     Linking.openURL(`whatsapp://send?phone=${cleanPhone}`).catch(() => {
       // Fallback
@@ -40,25 +93,44 @@ export default function GroupMembersScreen() {
     });
   };
 
-  const handleSendInvite = () => {
+  const handleSendInvite = async () => {
     if (!inviteName || !inviteEmail) return;
-    setIsLoading(true);
+    setIsInviting(true);
     
-    // Simulating network delay
-    setTimeout(() => {
-      const newMember = {
-         id: Math.random().toString(),
+    try {
+       const baseUrl = Platform.OS === 'android' ? 'http://10.0.2.2:3000' : 'http://localhost:3000';
+       const session = await fetchAuthSession();
+       const token = session.tokens?.idToken?.toString();
+
+       const reqBody = {
          name: inviteName,
-         role: 'Convite Pendente',
-         phone: inviteEmail, // showing email on phone spot temporarily
-         avatar: 'https://i.pravatar.cc/150?img=0' // generic
-      };
-      setMembers([...members, newMember]);
-      setIsLoading(false);
-      setShowInviteModal(false);
-      setInviteName('');
-      setInviteEmail('');
-    }, 1500);
+         email: inviteEmail.toLowerCase(),
+         role: 'MEMBER',
+         cellGroupId: myGroupId
+       };
+
+       const res = await fetch(`${baseUrl}/members/invite`, {
+         method: 'POST',
+         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+         body: JSON.stringify(reqBody)
+       });
+
+       if (res.ok) {
+          Alert.alert("Sucesso!", "O convite oficial com o link de cadastro foi disparado para o e-mail do participante.");
+          setShowInviteModal(false);
+          setInviteName('');
+          setInviteEmail('');
+          loadMembers(); // Atualiza a lista pra mostrar ele como Pendente!
+       } else {
+          const errData = await res.json();
+          Alert.alert("Ops", errData.error || "Algo deu errado ao enviar o convite.");
+       }
+    } catch (err) {
+       console.log("Error inviting", err);
+       Alert.alert("Ops", "Não foi possível concluir a ação.");
+    } finally {
+       setIsInviting(false);
+    }
   };
   
   return (
@@ -71,7 +143,7 @@ export default function GroupMembersScreen() {
           </TouchableOpacity>
           <View>
              <Text style={[styles.headerTitle, { color: textColor }]}>Participantes</Text>
-             <Text style={[styles.headerSubtitle, { color: textMuted }]}>{members.length} pessoas</Text>
+             <Text style={[styles.headerSubtitle, { color: textMuted }]}>{isLoading ? 'Carregando...' : `${members.length} pessoas`}</Text>
           </View>
           <TouchableOpacity style={styles.backBtn} onPress={() => setShowInviteModal(true)}>
             <Feather name="user-plus" size={22} color={accentColor} />
@@ -79,10 +151,19 @@ export default function GroupMembersScreen() {
         </View>
 
         <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-          {members.map((member, index) => {
+          {isLoading ? (
+             <ActivityIndicator size="large" color={accentColor} style={{ marginTop: 40 }} />
+          ) : members.length === 0 ? (
+             <View style={{ alignItems: 'center', marginTop: 40, opacity: 0.6 }}>
+               <Feather name="users" size={48} color={textMuted} style={{ marginBottom: 12 }} />
+               <Text style={{ color: textMuted, textAlign: 'center', marginHorizontal: 30 }}>
+                 Sua célula não possui membros ativos cadastrados ainda. Comece enviando convites pelo botão no topo!
+               </Text>
+             </View>
+          ) : members.map((member, index) => {
              const isLast = index === members.length - 1;
-             const isLeader = member.role.includes('Líder');
-             const isPending = member.role === 'Convite Pendente';
+             const isLeader = member.role && member.role.includes('LEADER');
+             const isPending = member.status === 'Pendente';
              
              return (
                <TouchableOpacity 
@@ -91,21 +172,29 @@ export default function GroupMembersScreen() {
                  activeOpacity={isPending ? 1 : 0.7}
                  onPress={() => !isPending && handleWhatsApp(member.phone)}
                >
-                 <Image source={{ uri: member.avatar }} style={[styles.avatar, isPending && { opacity: 0.3 }]} />
+                 {member.avatar ? (
+                   <Image source={{ uri: member.avatar }} style={[styles.avatar, isPending && { opacity: 0.3 }]} />
+                 ) : (
+                   <View style={[styles.avatarTemp, { backgroundColor: isPending ? borderColor : accentColor }]}>
+                      <Text style={{ fontWeight: 'bold', color: isPending ? textMuted : '#FFF' }}>
+                        {member.name.charAt(0).toUpperCase()}
+                      </Text>
+                   </View>
+                 )}
                  
                  <View style={styles.memberInfo}>
                    <View style={styles.nameRow}>
                       <Text style={[styles.memberName, { color: textColor, opacity: isPending ? 0.6 : 1 }]}>{member.name}</Text>
                       {isLeader && <Feather name="star" size={14} color="#FF9500" style={{ marginLeft: 6 }} />}
                    </View>
-                   <Text style={[styles.memberPhone, { color: textMuted }]}>{member.phone}</Text>
+                   <Text style={[styles.memberPhone, { color: textMuted, fontSize: 12 }]}>{isPending ? member.email : member.phone || "Telefone não registrado"}</Text>
                  </View>
                  
-                 {!isPending && (
+                 {!isPending && member.phone ? (
                    <TouchableOpacity style={styles.whatsappBtn} onPress={() => handleWhatsApp(member.phone)}>
                      <Feather name="message-circle" size={20} color="#34C759" />
                    </TouchableOpacity>
-                 )}
+                 ) : null}
                  
                  {isPending && (
                    <View style={[styles.roleTag, { backgroundColor: 'rgba(255,149,0,0.1)' }]}>
@@ -117,7 +206,6 @@ export default function GroupMembersScreen() {
           })}
         </ScrollView>
 
-        {/* Modal de Convites */}
         <Modal visible={showInviteModal} animationType="slide" transparent={true}>
           <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.modalBg}>
             <View style={[styles.modalContainer, { backgroundColor: cardColor }]}>
@@ -129,7 +217,7 @@ export default function GroupMembersScreen() {
                </View>
 
                <Text style={[styles.modalDesc, { color: textMuted }]}>
-                  Envie um convite amigável por e-mail. Quando ela aceitar e se cadastrar no App, automaticamente entrará neste Grupo!
+                  Envie um convite amigável por e-mail. Quando ela aceitar e se cadastrar no App, automaticamente entrará no seu Grupo!
                </Text>
 
                <Text style={[styles.inputLabel, { color: textMuted }]}>Nome Completo</Text>
@@ -141,7 +229,7 @@ export default function GroupMembersScreen() {
                  onChangeText={setInviteName}
                />
 
-               <Text style={[styles.inputLabel, { color: textMuted, marginTop: 16 }]}>E-mail</Text>
+               <Text style={[styles.inputLabel, { color: textMuted, marginTop: 16 }]}>E-mail Oficial</Text>
                <TextInput 
                  style={[styles.modalInput, { color: textColor, borderColor, backgroundColor: isDark ? '#1a2130' : '#FAFAFA' }]}
                  placeholder="Ex: joao@email.com"
@@ -155,12 +243,12 @@ export default function GroupMembersScreen() {
                <TouchableOpacity 
                  style={[styles.modalBtn, { backgroundColor: (inviteName && inviteEmail) ? accentColor : textMuted, marginTop: 24 }]}
                  onPress={handleSendInvite}
-                 disabled={!inviteName || !inviteEmail || isLoading}
+                 disabled={!inviteName || !inviteEmail || isInviting}
                >
-                 {isLoading ? (
+                 {isInviting ? (
                    <ActivityIndicator color="#FFF" />
                  ) : (
-                   <Text style={styles.modalBtnText}>Enviar Convite Oficial</Text>
+                   <Text style={styles.modalBtnText}>Disparar E-mail de Convite</Text>
                  )}
                </TouchableOpacity>
             </View>
@@ -181,6 +269,7 @@ const styles = StyleSheet.create({
   
   memberRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 16, paddingHorizontal: 16, borderRadius: 12, marginBottom: 8, shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.05, shadowRadius: 2, elevation: 1 },
   avatar: { width: 48, height: 48, borderRadius: 24, marginRight: 16 },
+  avatarTemp: { width: 48, height: 48, borderRadius: 24, marginRight: 16, justifyContent: 'center', alignItems: 'center' },
   memberInfo: { flex: 1 },
   nameRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 4 },
   memberName: { fontSize: 16, fontWeight: '700' },

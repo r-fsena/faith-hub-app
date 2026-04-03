@@ -1,34 +1,78 @@
-import React from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ScrollView, SafeAreaView, Platform, Image, Dimensions } from 'react-native';
+import React, { useState, useEffect } from 'react';
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView, SafeAreaView, Platform, Image, Dimensions, ActivityIndicator } from 'react-native';
 import { Stack, useRouter } from 'expo-router';
 import { Feather } from '@expo/vector-icons';
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { getCurrentUser, fetchAuthSession } from 'aws-amplify/auth';
 
 const { width } = Dimensions.get('window');
 const COLUMN_COUNT = 3;
 const IMAGE_SIZE = (width - 40 - (8 * (COLUMN_COUNT - 1))) / COLUMN_COUNT; // 40 is padding horizontal
 
-const mockPhotos = [
-  { id: '1', url: 'https://images.unsplash.com/photo-1543884144-80252b47fc0d?q=80&w=800&auto=format&fit=crop' },
-  { id: '2', url: 'https://images.unsplash.com/photo-1521737604893-d14cc237f11d?q=80&w=800&auto=format&fit=crop' },
-  { id: '3', url: 'https://images.unsplash.com/photo-1517486808906-6ca8b3f04846?q=80&w=800&auto=format&fit=crop' },
-  { id: '4', url: 'https://images.unsplash.com/photo-1529070538774-1843cb1c117d?q=80&w=800&auto=format&fit=crop' },
-  { id: '5', url: 'https://images.unsplash.com/photo-1528605248644-14dd04022da1?q=80&w=800&auto=format&fit=crop' },
-  { id: '6', url: 'https://images.unsplash.com/photo-1498503182468-3b51cbb6cb24?q=80&w=800&auto=format&fit=crop' },
-  { id: '7', url: 'https://images.unsplash.com/photo-1519750157634-b6d493a0f77c?q=80&w=800&auto=format&fit=crop' },
-  { id: '8', url: 'https://images.unsplash.com/photo-1605806616949-1e87b487cb2a?q=80&w=800&auto=format&fit=crop' },
-];
+type PostMedia = {
+  id: string;
+  media_url: string;
+  media_type: 'IMAGE' | 'VIDEO';
+  author_name: string;
+  created_at: string;
+};
 
 export default function GroupGalleryScreen() {
   const router = useRouter();
   const colorScheme = useColorScheme();
   const isDark = colorScheme === 'dark';
 
+  const [photos, setPhotos] = useState<PostMedia[]>([]);
+  const [loading, setLoading] = useState(true);
+
   const bgColor = isDark ? '#1a2130' : '#f5f5f5';
   const textColor = isDark ? '#FFFFFF' : '#11181C';
   const textMuted = isDark ? '#9BA1A6' : '#687076';
   const borderColor = isDark ? '#404c60' : '#EAEAEA';
-  
+  const accentColor = '#5bc3bb';
+
+  useEffect(() => {
+    loadGallery();
+  }, []);
+
+  const loadGallery = async () => {
+    setLoading(true);
+    try {
+      const baseUrl = Platform.OS === 'android' ? 'http://10.0.2.2:3000' : 'http://localhost:3000';
+      
+      let groupId = '';
+
+      try {
+        const user = await getCurrentUser();
+        if (user?.userId) {
+          const userRes = await fetch(`${baseUrl}/members/${user.userId}`);
+          if (userRes.ok) {
+            const userData = await userRes.json();
+            if (userData.data?.cell_group_id) {
+              groupId = userData.data.cell_group_id;
+            }
+          }
+        }
+      } catch (e) { console.log(e); }
+
+      const session = await fetchAuthSession();
+      const token = session.tokens?.idToken?.toString();
+
+      // Buscamos SOMENTE as postagens que contêm imagem/vídeo (Filtro Inteligente no Backend)
+      const res = await fetch(`${baseUrl}/posts?media_only=true${groupId ? `&group_id=${groupId}` : ''}`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      
+      if (res.ok) {
+        setPhotos(await res.json());
+      }
+    } catch (err) {
+      console.log('Error loading gallery:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
     <>
       <Stack.Screen options={{ headerShown: false }} />
@@ -39,25 +83,41 @@ export default function GroupGalleryScreen() {
           </TouchableOpacity>
           <View>
              <Text style={[styles.headerTitle, { color: textColor }]}>Álbum Oficial</Text>
-             <Text style={[styles.headerSubtitle, { color: textMuted }]}>{mockPhotos.length} fotos salvas</Text>
+             <Text style={[styles.headerSubtitle, { color: textMuted }]}>{photos.length} fotos salvas</Text>
           </View>
-          <TouchableOpacity style={styles.backBtn}>
-            <Feather name="upload-cloud" size={22} color="#5bc3bb" />
+          <TouchableOpacity style={styles.backBtn} onPress={() => router.push('/groups/board')}>
+            <Feather name="plus" size={22} color={accentColor} />
           </TouchableOpacity>
         </View>
 
         <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
           
-          <View style={styles.gridContainer}>
-            {mockPhotos.map((photo, index) => (
-              <TouchableOpacity key={photo.id} style={styles.photoWrapper} activeOpacity={0.8}>
-                <Image source={{ uri: photo.url }} style={[styles.photo, { width: IMAGE_SIZE, height: IMAGE_SIZE }]} />
-              </TouchableOpacity>
-            ))}
-          </View>
+          {loading ? (
+            <ActivityIndicator size="large" color={accentColor} style={{ marginTop: 40 }} />
+          ) : photos.length === 0 ? (
+            <View style={{ alignItems: 'center', marginTop: 80, opacity: 0.6 }}>
+               <Feather name="image" size={48} color={textMuted} style={{ marginBottom: 12 }} />
+               <Text style={{ color: textMuted, textAlign: 'center', marginHorizontal: 30 }}>
+                 Nenhuma foto encontrada. Envie imagens no Mural do grupo para que elas apareçam aqui!
+               </Text>
+            </View>
+          ) : (
+            <View style={styles.gridContainer}>
+              {photos.map((photo) => (
+                <TouchableOpacity key={photo.id} style={styles.photoWrapper} activeOpacity={0.8}>
+                  <Image source={{ uri: photo.media_url }} style={[styles.photo, { width: IMAGE_SIZE, height: IMAGE_SIZE }]} />
+                  {photo.media_type === 'VIDEO' && (
+                    <View style={styles.videoIconOverlay}>
+                      <Feather name="play-circle" size={24} color="#FFF" />
+                    </View>
+                  )}
+                </TouchableOpacity>
+              ))}
+            </View>
+          )}
           
           <View style={styles.emptyState}>
-             <Feather name="camera" size={32} color={textMuted} style={{ marginBottom: 12, opacity: 0.5 }} />
+             <Feather name="camera" size={24} color={textMuted} style={{ marginBottom: 12, opacity: 0.3 }} />
              <Text style={[styles.emptyStateText, { color: textMuted }]}>
                Todas as fotos enviadas no mural da sua célula são arquivadas automaticamente aqui para gerar história!
              </Text>
@@ -78,9 +138,10 @@ const styles = StyleSheet.create({
   scrollContent: { padding: 20, paddingBottom: 60 },
   
   gridContainer: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  photoWrapper: { borderRadius: 12, overflow: 'hidden' },
-  photo: { borderRadius: 12 },
+  photoWrapper: { borderRadius: 12, overflow: 'hidden', position: 'relative' },
+  photo: { borderRadius: 12, backgroundColor: 'rgba(0,0,0,0.05)' },
+  videoIconOverlay: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.2)' },
 
   emptyState: { alignItems: 'center', padding: 32, marginTop: 40 },
-  emptyStateText: { fontSize: 13, textAlign: 'center', lineHeight: 20, opacity: 0.8 }
+  emptyStateText: { fontSize: 12, textAlign: 'center', lineHeight: 20, opacity: 0.6 }
 });
