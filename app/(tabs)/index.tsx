@@ -1,19 +1,23 @@
-import React from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, SafeAreaView, Platform, Dimensions, StatusBar } from 'react-native';
+import React, { useState, useEffect } from 'react';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, SafeAreaView, Platform, Dimensions, StatusBar, Modal, Image, Switch } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { useAuth } from '@/context/AuthContext';
 import { useRouter } from 'expo-router';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import YoutubePlayer from 'react-native-youtube-iframe';
+import { WebView } from 'react-native-webview';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { fetchAuthSession, getCurrentUser } from 'aws-amplify/auth';
 
 const { width } = Dimensions.get('window');
 
 // Mock data
 const quickAccess = [
+  { id: 'store', title: 'Loja', icon: 'shopping-bag', route: '/store', type: 'feather' },
   { id: 'bible', title: 'Bíblia', icon: 'book', route: '/(tabs)/bible', type: 'feather' },
   { id: 'donate', title: 'Contribuir', icon: 'heart', route: '/(tabs)/donate', type: 'feather' },
-  { id: 'groups', title: 'Células', icon: 'users', route: '/(tabs)/menu', type: 'feather' },
-  { id: 'prayers', title: 'Orações', icon: 'message-square', route: '/(tabs)/menu', type: 'feather' },
+  { id: 'groups', title: 'Células', icon: 'users', route: '/(tabs)/groups', type: 'feather' },
+  { id: 'prayers', title: 'Orações', icon: 'message-square', route: '/(tabs)/prayers', type: 'feather' },
   { id: 'devotional', title: 'Devocional', icon: 'sun', route: '/(tabs)/devotional', type: 'feather' },
 ];
 
@@ -23,8 +27,103 @@ export default function HomeScreen() {
   const colorScheme = useColorScheme();
   const isDark = colorScheme === 'dark';
   
-  const [isPlayingLive, setIsPlayingLive] = React.useState(false);
-  const liveVideoId = "jfKfPfyJRdk"; // Replace with your church's actual YouTube live video ID 
+  const [isPlayingLive, setIsPlayingLive] = useState(false);
+  const [showProfile, setShowProfile] = useState(false);
+  const [showNotifications, setShowNotifications] = useState(false);
+  const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
+  const [lgpdConsent, setLgpdConsent] = useState<boolean>(true);
+  const [activeBroadcast, setActiveBroadcast] = useState<any>(null);
+  const [memberProfile, setMemberProfile] = useState<any>(null);
+  const [featuredEvent, setFeaturedEvent] = useState<any>(null);
+  
+  const extractVideoId = (url: string) => {
+    if (!url) return null;
+    const match = url.match(/(?:youtu\.be\/|youtube\.com\/(?:embed\/|v\/|live\/|watch\?v=|watch\?.+&v=))([^&?\s]{11})/);
+    return match ? match[1] : null;
+  };
+  useEffect(() => {
+    const loadState = async () => {
+      const savedAvatar = await AsyncStorage.getItem('user_avatar');
+      if (savedAvatar) setAvatarUrl(savedAvatar);
+      
+      const savedLgpd = await AsyncStorage.getItem('lgpd_consent');
+      if (savedLgpd !== null) setLgpdConsent(savedLgpd === 'true');
+
+      // Fetch dynamic backend user info!
+      try {
+        const user = await getCurrentUser();
+        if (user?.userId) {
+          const baseUrl = Platform.OS === 'android' ? 'http://10.0.2.2:3000' : 'http://localhost:3000';
+          const userRes = await fetch(`${baseUrl}/members/${user.userId}?t=${Date.now()}`);
+          if (userRes.ok) {
+            const userData = await userRes.json();
+            setMemberProfile(userData.data);
+          }
+        }
+      } catch (err) {
+        console.log("Error loading member session details", err);
+      }
+    };
+    
+    const fetchBroadcast = async () => {
+      try {
+        const baseUrl = Platform.OS === 'android' ? 'http://10.0.2.2:3000' : 'http://localhost:3000';
+        const res = await fetch(`${baseUrl}/broadcasts/active`);
+        if (res.ok) {
+          const data = await res.json();
+          setActiveBroadcast(data);
+        }
+      } catch (err) {
+        console.log("Erro ao buscar live:", err);
+      }
+    };
+
+    const fetchFeaturedEvent = async () => {
+      try {
+        const baseUrl = Platform.OS === 'android' ? 'http://10.0.2.2:3000' : 'http://localhost:3000';
+        const res = await fetch(`${baseUrl}/events`);
+        if (res.ok) {
+          const { data } = await res.json();
+          if (data && data.length > 0) {
+            const featured = data.find((e: any) => e.is_featured === 1);
+            if (featured) {
+              setFeaturedEvent(featured);
+            } else {
+              const newest = [...data].sort((a, b) => new Date(b.created_at || b.start_date).getTime() - new Date(a.created_at || a.start_date).getTime());
+              setFeaturedEvent(newest[0]);
+            }
+          }
+        }
+      } catch (err) {
+        console.log("Erro fetch eventos home:", err);
+      }
+    };
+
+    loadState();
+    fetchBroadcast();
+    fetchFeaturedEvent();
+  }, []);
+
+  const changeAvatar = async () => {
+    // Simulador super fluído de escolha de avatar do usuário até conectarmos a camêra/galeria Real (Para escapar do erro de Kernel NPM instalation EPERM)
+    const mockAvatars = [
+      'https://i.pravatar.cc/150?img=11',
+      'https://i.pravatar.cc/150?img=12',
+      'https://i.pravatar.cc/150?img=33',
+      'https://i.pravatar.cc/150?img=47',
+      'https://i.pravatar.cc/150?img=68'
+    ];
+    const currentIndex = avatarUrl ? mockAvatars.indexOf(avatarUrl) : -1;
+    const nextIndex = (currentIndex + 1) % mockAvatars.length;
+    const nextAvatar = mockAvatars[nextIndex];
+    setAvatarUrl(nextAvatar);
+    await AsyncStorage.setItem('user_avatar', nextAvatar);
+  };
+
+  const toggleLgpd = async (value: boolean) => {
+    setLgpdConsent(value);
+    await AsyncStorage.setItem('lgpd_consent', value ? 'true' : 'false');
+  };
 
   const bgColor = isDark ? '#2c3444' : '#f1f1f1'; 
   const cardColor = isDark ? '#1E1E1E' : '#FFFFFF';
@@ -50,15 +149,19 @@ export default function HomeScreen() {
         {/* HEADER */}
         <View style={styles.header}>
           <View style={styles.headerLeft}>
-            <TouchableOpacity onPress={signOut} style={styles.avatar} activeOpacity={0.8}>
-              <Text style={styles.avatarText}>R</Text>
+            <TouchableOpacity onPress={() => setShowProfile(true)} style={[styles.avatar, avatarUrl ? { backgroundColor: 'transparent' } : {}]} activeOpacity={0.8}>
+              {avatarUrl ? (
+                <Image source={{ uri: avatarUrl }} style={{ width: '100%', height: '100%', borderRadius: 22 }} />
+              ) : (
+                <Text style={styles.avatarText}>R</Text>
+              )}
             </TouchableOpacity>
             <View>
               <Text style={[styles.greetingText, { color: textMuted }]}>Boa noite,</Text>
               <Text style={[styles.userName, { color: textColor }]}>{getUserName()}</Text>
             </View>
           </View>
-          <TouchableOpacity style={[styles.bellContainer, { borderColor }]}>
+          <TouchableOpacity onPress={() => setShowNotifications(true)} style={[styles.bellContainer, { borderColor }]}>
             <Feather name="bell" size={20} color={textColor} />
             <View style={[styles.bellBadge, { borderColor: bgColor }]} />
           </TouchableOpacity>
@@ -75,70 +178,99 @@ export default function HomeScreen() {
           decelerationRate="fast"
         >
           {/* Card 1 - LIVE STREAM */}
-          <View style={[styles.featuredCard, { backgroundColor: '#5bc3bb', overflow: 'hidden', padding: isPlayingLive ? 0 : 24 }]}>
-            {isPlayingLive ? (
-              <View style={{ width: '100%', height: '100%', borderRadius: 28, overflow: 'hidden' }}>
-                <YoutubePlayer
-                  height={250}
-                  play={true}
-                  videoId={liveVideoId}
-                  webViewStyle={{ opacity: 0.99 }} // fixing android rendering quirks
-                />
-                <TouchableOpacity 
-                  style={{ position: 'absolute', top: 10, right: 10, backgroundColor: 'rgba(0,0,0,0.5)', padding: 8, borderRadius: 20 }}
-                  onPress={() => setIsPlayingLive(false)}
-                >
-                  <Feather name="x" size={20} color="#FFF" />
-                </TouchableOpacity>
-              </View>
-            ) : (
-              <>
-                <View style={styles.liveBadge}>
-                  <View style={styles.liveDot} />
-                  <Text style={styles.liveText}>AO VIVO</Text>
+          {activeBroadcast && (
+            <View style={[styles.featuredCard, { backgroundColor: '#5bc3bb', overflow: 'hidden', padding: isPlayingLive ? 0 : 24 }]}>
+              {isPlayingLive ? (
+                <View style={{ width: '100%', height: '100%', borderRadius: 28, overflow: 'hidden' }}>
+                  {extractVideoId(activeBroadcast.youtube_url) ? (
+                    <YoutubePlayer
+                      height={250}
+                      play={true}
+                      videoId={extractVideoId(activeBroadcast.youtube_url)}
+                      webViewStyle={{ opacity: 0.99 }} // fixing android rendering quirks
+                    />
+                  ) : (
+                    <WebView
+                      source={{ uri: activeBroadcast.youtube_url }}
+                      style={{ height: 250, width: '100%', opacity: 0.99 }}
+                      javaScriptEnabled={true}
+                      allowsInlineMediaPlayback={true}
+                      mediaPlaybackRequiresUserAction={false}
+                    />
+                  )}
+                  <TouchableOpacity 
+                    style={{ position: 'absolute', top: 10, right: 10, backgroundColor: 'rgba(0,0,0,0.5)', padding: 8, borderRadius: 20 }}
+                    onPress={() => setIsPlayingLive(false)}
+                  >
+                    <Feather name="x" size={20} color="#FFF" />
+                  </TouchableOpacity>
                 </View>
-                <Text style={styles.cardTitle}>Culto de Celebração</Text>
-                <Text style={styles.cardSubtitle}>
-                  Acompanhe a palavra ao vivo agora mesmo com a nossa família.
-                </Text>
-                <TouchableOpacity style={styles.cardButton} activeOpacity={0.8} onPress={() => setIsPlayingLive(true)}>
-                  <View style={styles.cardButtonIcon}>
-                    <Feather name="play" size={14} color="#5bc3bb" style={{ marginLeft: 3 }} />
+              ) : (
+                <>
+                  <View style={styles.liveBadge}>
+                    <View style={styles.liveDot} />
+                    <Text style={styles.liveText}>AO VIVO</Text>
                   </View>
-                  <Text style={styles.cardButtonText}>Assistir Transmissão</Text>
-                </TouchableOpacity>
-              </>
-            )}
-          </View>
-
-          {/* Card 2 */}
-          <View style={[styles.featuredCard, { backgroundColor: '#FF9500' }]}>
-            <View style={[styles.liveBadge, { backgroundColor: 'rgba(255,255,255,0.2)' }]}>
-              <Feather name="calendar" size={12} color="#FFF" style={{ marginRight: 4 }} />
-              <Text style={styles.liveText}>EVENTO</Text>
+                  <Text style={styles.cardTitle}>{activeBroadcast.title}</Text>
+                  <Text style={styles.cardSubtitle}>
+                    {activeBroadcast.description || 'Acompanhe a palavra ao vivo agora mesmo com a nossa família.'}
+                  </Text>
+                  <TouchableOpacity style={styles.cardButton} activeOpacity={0.8} onPress={() => setIsPlayingLive(true)}>
+                    <View style={styles.cardButtonIcon}>
+                      <Feather name="play" size={14} color="#5bc3bb" style={{ marginLeft: 3 }} />
+                    </View>
+                    <Text style={styles.cardButtonText}>Assistir Transmissão</Text>
+                  </TouchableOpacity>
+                </>
+              )}
             </View>
-            <Text style={styles.cardTitle}>Acampamento Jovem</Text>
-            <Text style={styles.cardSubtitle}>
-              Lote virando em poucas horas! Garanta sua vaga agora mesmo.
-            </Text>
+          )}
+
+          {/* Card 2 - FEATURED EVENT */}
+          {featuredEvent && (
             <TouchableOpacity 
-              style={styles.cardButton} 
-              activeOpacity={0.8}
-              onPress={() => router.push('/event/signup' as any)}
+              activeOpacity={0.9} 
+              onPress={() => router.push(`/events/${featuredEvent.id}`)}
+              style={[styles.featuredCard, { backgroundColor: featuredEvent.type === 1 ? '#0a7ea4' : '#FF9500', padding: 0, overflow: 'hidden' }]}
             >
-              <View style={[styles.cardButtonIcon, { backgroundColor: '#FFF' }]}>
-                <Feather name="chevron-right" size={16} color="#FF9500" />
+              <Image source={{ uri: featuredEvent.image_url }} style={{ width: '100%', height: '100%', position: 'absolute', opacity: 0.6 }} />
+              <View style={{ width: '100%', height: '100%', backgroundColor: 'rgba(0,0,0,0.4)', position: 'absolute' }} />
+              
+              <View style={{ padding: 24, flex: 1, justifyContent: 'space-between' }}>
+                <View style={[styles.liveBadge, { backgroundColor: featuredEvent.is_featured === 1 ? '#FFD700' : 'rgba(255,255,255,0.3)' }]}>
+                  {featuredEvent.is_featured === 1 ? (
+                     <Text style={[styles.liveText, { color: '#111' }]}>🌟 DESTAQUE</Text>
+                  ) : (
+                     <Text style={styles.liveText}>{featuredEvent.type === 1 ? 'CURSO RECENTE' : 'PRÓXIMO EVENTO'}</Text>
+                  )}
+                </View>
+
+                <View>
+                  <Text style={styles.cardTitle} numberOfLines={2}>{featuredEvent.title}</Text>
+                  <Text style={styles.cardSubtitle} numberOfLines={2}>
+                    {featuredEvent.description}
+                  </Text>
+                  <View style={styles.cardButton}>
+                    <View style={[styles.cardButtonIcon, { backgroundColor: '#FFF' }]}>
+                      <Feather name="chevron-right" size={16} color={featuredEvent.type === 1 ? '#0a7ea4' : '#FF9500'} />
+                    </View>
+                    <Text style={styles.cardButtonText}>Me Inscrever</Text>
+                  </View>
+                </View>
               </View>
-              <Text style={styles.cardButtonText}>Fazer Inscrição</Text>
             </TouchableOpacity>
-          </View>
+          )}
         </ScrollView>
 
         {/* ACESSO RÁPIDO */}
         <View style={styles.sectionHeader}>
           <Text style={[styles.sectionTitle, { color: textColor }]}>Acesso Rápido</Text>
         </View>
-        <View style={styles.quickAccessGrid}>
+        <ScrollView 
+          horizontal 
+          showsHorizontalScrollIndicator={false} 
+          contentContainerStyle={styles.quickAccessScroll}
+        >
           {quickAccess.map((item, index) => (
             <TouchableOpacity 
               key={index} 
@@ -151,12 +283,12 @@ export default function HomeScreen() {
               <Text style={[styles.quickAccessText, { color: textMuted }]}>{item.title}</Text>
             </TouchableOpacity>
           ))}
-        </View>
+        </ScrollView>
 
         {/* EVENTOS & CURSOS HUB BANNER */}
         <TouchableOpacity 
           style={[styles.hubBanner, { backgroundColor: isDark ? '#1E1E1E' : '#e4f5f4', borderColor: isDark ? '#333' : 'transparent', borderWidth: 1 }]}
-          onPress={() => router.push('/event' as any)}
+          onPress={() => router.push('/events')}
           activeOpacity={0.8}
         >
           <View style={styles.hubBannerContent}>
@@ -209,6 +341,127 @@ export default function HomeScreen() {
         </View>
 
       </ScrollView>
+
+      {/* User Profile Modal */}
+      <Modal visible={showProfile} animationType="slide" transparent={true}>
+        <View style={styles.modalBg}>
+          <View style={[styles.modalContainer, { backgroundColor: cardColor }]}>
+            <View style={styles.modalHeaderRow}>
+              <Text style={[styles.modalTitle, { color: textColor }]}>Meu Perfil</Text>
+              <TouchableOpacity onPress={() => setShowProfile(false)}>
+                <Feather name="x" size={24} color={textMuted} />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 24 }}>
+              <View style={styles.profileHeader}>
+                <TouchableOpacity onPress={changeAvatar} style={[styles.avatarLarge, { backgroundColor: avatarUrl ? 'transparent' : '#5bc3bb' }]}>
+                  {avatarUrl ? (
+                    <Image source={{ uri: avatarUrl }} style={{ width: '100%', height: '100%', borderRadius: 40 }} />
+                  ) : (
+                    <Text style={styles.avatarLargeText}>R</Text>
+                  )}
+                  <View style={styles.editAvatarBadge}>
+                     <Feather name="camera" size={14} color="#FFF" />
+                  </View>
+                </TouchableOpacity>
+                <Text style={[styles.profileName, { color: textColor }]}>{getUserName()} Sena</Text>
+                <Text style={[styles.profilePhone, { color: textMuted }]}>(11) 98888-7777</Text>
+              </View>
+
+              <View style={[styles.profileBlock, { borderBottomColor: borderColor }]}>
+                <Text style={[styles.infoLabel, { color: textMuted }]}>E-mail</Text>
+                <Text style={[styles.infoValue, { color: textColor }]}>rafael.sena@email.com</Text>
+              </View>
+
+              <View style={[styles.profileBlock, { borderBottomColor: borderColor }]}>
+                <Text style={[styles.infoLabel, { color: textMuted }]}>CPF</Text>
+                <Text style={[styles.infoValue, { color: textColor }]}>{memberProfile?.cpf || '***.123.456-**'}</Text>
+              </View>
+
+              <View style={[styles.profileBlock, { borderBottomColor: borderColor }]}>
+                <Text style={[styles.infoLabel, { color: textMuted }]}>Endereço do Membro</Text>
+                <Text style={[styles.infoValue, { color: textColor }]}>Rua das Flores, 123, Sala 4, São Paulo - SP</Text>
+              </View>
+
+              <View style={[styles.profileBlock, { borderBottomColor: borderColor }]}>
+                <Text style={[styles.infoLabel, { color: textMuted }]}>Célula / Grupo Local</Text>
+                <Text style={[styles.infoValue, { color: textColor }]}>{memberProfile?.cell_group_name || 'Nenhum grupo físico associado.'}</Text>
+                <TouchableOpacity onPress={() => { setShowProfile(false); router.push('/(tabs)/groups'); }}>
+                  <Text style={{ color: '#5bc3bb', fontWeight: '800', marginTop: 8 }}>
+                    {memberProfile?.cell_group_id ? 'Acessar meu Grupo Local' : 'Encontrar uma Célula próxima'}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+
+              <View style={styles.profileRow}>
+                <View style={[styles.profileBlock, { borderBottomColor: borderColor, flex: 1, borderBottomWidth: 0 }]}>
+                  <Text style={[styles.infoLabel, { color: textMuted }]}>Data de Batismo</Text>
+                  <Text style={[styles.infoValue, { color: textColor }]}>12/04/2018</Text>
+                </View>
+                <View style={[styles.profileBlock, { borderBottomColor: borderColor, flex: 1, borderBottomWidth: 0 }]}>
+                  <Text style={[styles.infoLabel, { color: textMuted }]}>Membro desde</Text>
+                  <Text style={[styles.infoValue, { color: '#5bc3bb', fontWeight: '800' }]}>Há 6 anos</Text>
+                </View>
+              </View>
+
+              <View style={[styles.switchRow, { borderBottomColor: borderColor }]}>
+                <View style={{ flex: 1, marginRight: 16 }}>
+                  <Text style={[styles.infoLabel, { color: textMuted }]}>Notificações e LGPD</Text>
+                  <Text style={[styles.lgpdDesc, { color: textColor }]}>Aceito receber avisos oficiais, devocionais ou tesouraria por SMS, Push ou E-mail.</Text>
+                </View>
+                <Switch 
+                  value={lgpdConsent} 
+                  onValueChange={toggleLgpd}
+                  trackColor={{ true: '#5bc3bb', false: isDark ? '#333' : '#EAEAEA' }}
+                />
+              </View>
+
+              <TouchableOpacity style={styles.logoutBtn} onPress={() => { setShowProfile(false); signOut(); }}>
+                <Feather name="log-out" size={20} color="#FF3B30" />
+                <Text style={styles.logoutBtnText}>Sair da Conta (Logout)</Text>
+              </TouchableOpacity>
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Notifications Modal */}
+      <Modal visible={showNotifications} animationType="fade" transparent={true}>
+        <View style={styles.modalBg}>
+          <View style={[styles.modalContainer, { backgroundColor: cardColor, minHeight: '80%' }]}>
+            <View style={styles.modalHeaderRow}>
+              <Text style={[styles.modalTitle, { color: textColor }]}>Notificações</Text>
+              <TouchableOpacity onPress={() => setShowNotifications(false)}>
+                <Feather name="x" size={24} color={textMuted} />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 24 }}>
+              {[
+                { id: '1', title: 'Culto de Celebração', message: 'O culto ao vivo começa em 15 minutos! Assista agora.', time: 'Há 15 min', icon: 'youtube', color: '#FF3B30', unread: true },
+                { id: '2', title: 'Doação Aprovada', message: 'Seu comprovante de contribuição ao Projeto Construção foi validado.', time: 'Há 2 horas', icon: 'check-circle', color: '#00C464', unread: true },
+                { id: '3', title: 'Comunidade / Célula', message: 'Pr. Rafael enviou um convite pendente para o Pequeno Grupo Aliança.', time: 'Ontem', icon: 'users', color: '#5bc3bb', unread: false },
+                { id: '4', title: 'Painel de Orações', message: '5 membros da igreja acabaram de deixar um "Amém" na sua causa.', time: 'Sexta-feira', icon: 'message-square', color: '#9D64FF', unread: false },
+              ].map((notif) => (
+                <TouchableOpacity key={notif.id} style={[styles.notificationCard, { borderBottomColor: borderColor, backgroundColor: notif.unread ? (isDark ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.02)') : 'transparent' }]} activeOpacity={0.7}>
+                  <View style={[styles.notificationIconBg, { backgroundColor: `${notif.color}15` }]}>
+                    <Feather name={notif.icon as any} size={20} color={notif.color} />
+                  </View>
+                  <View style={styles.notificationContent}>
+                    <View style={styles.notificationHeader}>
+                      <Text style={[styles.notificationTitle, { color: textColor }]} numberOfLines={1}>{notif.title}</Text>
+                      <Text style={[styles.notificationTime, { color: textMuted }]}>{notif.time}</Text>
+                    </View>
+                    <Text style={[styles.notificationText, { color: textMuted }]} numberOfLines={2}>{notif.message}</Text>
+                  </View>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
     </SafeAreaView>
   );
 }
@@ -366,14 +619,14 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#5bc3bb',
   },
-  quickAccessGrid: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
+  quickAccessScroll: {
     paddingHorizontal: 24,
+    paddingBottom: 8,
   },
   quickAccessItem: {
     alignItems: 'center',
-    width: '18%',
+    width: 76,
+    marginRight: 12,
   },
   quickAccessIcon: {
     width: 60,
@@ -478,4 +731,33 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
+  
+  // Modal Perfil
+  modalBg: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'flex-end' },
+  modalContainer: { borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingHorizontal: 24, paddingTop: 24, paddingBottom: Platform.OS === 'ios' ? 40 : 24, maxHeight: '85%' },
+  modalHeaderRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 },
+  modalTitle: { fontSize: 22, fontWeight: '800' },
+  profileHeader: { alignItems: 'center', marginBottom: 32 },
+  avatarLarge: { width: 80, height: 80, borderRadius: 40, justifyContent: 'center', alignItems: 'center', marginBottom: 12, position: 'relative' },
+  avatarLargeText: { color: '#FFF', fontSize: 32, fontWeight: '800' },
+  editAvatarBadge: { position: 'absolute', bottom: 0, right: 0, backgroundColor: '#FF3B30', width: 26, height: 26, borderRadius: 13, justifyContent: 'center', alignItems: 'center', borderWidth: 2, borderColor: '#FFF' },
+  profileName: { fontSize: 24, fontWeight: '800', marginBottom: 4 },
+  profilePhone: { fontSize: 16, fontWeight: '500' },
+  profileBlock: { paddingVertical: 16, borderBottomWidth: 1 },
+  infoLabel: { fontSize: 12, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 8 },
+  infoValue: { fontSize: 16, fontWeight: '600' },
+  profileRow: { flexDirection: 'row', justifyContent: 'space-between', borderBottomWidth: 1 },
+  switchRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 16, borderBottomWidth: 1 },
+  lgpdDesc: { fontSize: 14, lineHeight: 20 },
+  logoutBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', padding: 16, borderRadius: 12, backgroundColor: 'rgba(255, 59, 48, 0.1)', marginTop: 32 },
+  logoutBtnText: { color: '#FF3B30', fontSize: 16, fontWeight: '700', marginLeft: 8 },
+  
+  // Notification Modal Styles
+  notificationCard: { flexDirection: 'row', paddingVertical: 16, paddingHorizontal: 12, borderBottomWidth: 1, borderRadius: 12 },
+  notificationIconBg: { width: 44, height: 44, borderRadius: 22, justifyContent: 'center', alignItems: 'center', marginRight: 16 },
+  notificationContent: { flex: 1 },
+  notificationHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 },
+  notificationTitle: { fontSize: 15, fontWeight: '700', flex: 1, marginRight: 8 },
+  notificationTime: { fontSize: 12, fontWeight: '500' },
+  notificationText: { fontSize: 14, lineHeight: 20 },
 });

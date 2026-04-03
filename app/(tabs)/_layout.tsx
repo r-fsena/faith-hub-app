@@ -6,6 +6,7 @@ import { HapticTab } from '@/components/haptic-tab';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { Feather } from '@expo/vector-icons';
+import { APP_CONFIG } from '@/constants/AppConfig';
 
 export default function TabLayout() {
   const colorScheme = useColorScheme();
@@ -73,28 +74,28 @@ export default function TabLayout() {
         }}
       />
 
-      {/* 4. Doar (Right 1) */}
+      {/* 4. Grupos / Células / GC (Right 1) */}
       <Tabs.Screen
-        name="donate"
+        name="groups"
         options={{
-          title: 'Doar',
+          title: APP_CONFIG.terms.smallGroupPlural,
           tabBarIcon: ({ color, focused }) => (
             <View style={styles.iconContainer}>
-              <Feather size={focused ? 26 : 24} name="heart" color={color} />
+              <Feather size={focused ? 26 : 24} name="users" color={color} />
               {focused && <View style={[styles.activeDot, { backgroundColor: primaryBrandColor }]} />}
             </View>
           ),
         }}
       />
 
-      {/* 5. Menu / Células / Mais (Right 2) */}
+      {/* 5. Orações (Right 2) - Substitui o antigo Menu global */}
       <Tabs.Screen
-        name="menu"
+        name="prayers"
         options={{
-          title: 'Menu',
+          title: 'Orações',
           tabBarIcon: ({ color, focused }) => (
             <View style={styles.iconContainer}>
-              <Feather size={focused ? 26 : 24} name="grid" color={color} />
+              <Feather size={focused ? 26 : 24} name="message-square" color={color} />
               {focused && <View style={[styles.activeDot, { backgroundColor: primaryBrandColor }]} />}
             </View>
           ),
@@ -103,11 +104,17 @@ export default function TabLayout() {
 
       {/* Hidden Screens */}
       <Tabs.Screen
+        name="menu"
+        options={{ href: null }}
+      />
+
+      {/* Hidden Screens */}
+      <Tabs.Screen
         name="explore"
         options={{ href: null }}
       />
       <Tabs.Screen
-        name="groups"
+        name="donate"
         options={{ href: null }}
       />
     </Tabs>
